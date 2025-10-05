@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Tuco AI - Lead Management",
-  description: "Modern B2B SaaS lead management platform",
+  title: "Tuco AI - iMessage Automation Platform",
+  description: "Tuco AI is a modern iMessage automation platform",
 };
 
 export default function RootLayout({
