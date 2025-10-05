@@ -19,10 +19,14 @@ const HUBSPOT_REDIRECT_URI = process.env.HUBSPOT_REDIRECT_URI || `${process.env.
 // OAuth flow initiation
 export async function GET(request: NextRequest) {
   try {
-    const { userId } = await auth();
+    const { userId, orgId } = await auth();
     
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    if (!orgId) {
+      return NextResponse.json({ error: 'No active workspace' }, { status: 400 });
     }
 
     const { searchParams } = new URL(request.url);
@@ -30,7 +34,7 @@ export async function GET(request: NextRequest) {
 
     if (action === 'oauth') {
       // Initiate OAuth flow
-      const state = Buffer.from(JSON.stringify({ userId })).toString('base64');
+      const state = Buffer.from(JSON.stringify({ userId, orgId })).toString('base64');
       const scopes = 'crm.objects.contacts.read crm.objects.contacts.write crm.objects.companies.read';
       
       const authUrl = `${HUBSPOT_OAUTH_BASE}/authorize?` + new URLSearchParams({
@@ -53,7 +57,7 @@ export async function GET(request: NextRequest) {
 
       // Decode state to get userId
       const stateData = JSON.parse(Buffer.from(state, 'base64').toString());
-      const { userId: stateUserId } = stateData;
+      const { userId: stateUserId, orgId: stateOrgId } = stateData;
 
       // Exchange code for access token
       const tokenResponse = await fetch(`${HUBSPOT_OAUTH_BASE}/token`, {
@@ -125,7 +129,7 @@ export async function GET(request: NextRequest) {
       }
 
       // Start background import job
-      await startHubSpotImportJob(stateUserId, access_token, configId);
+      await startHubSpotImportJob(stateUserId, stateOrgId, access_token, configId);
 
       return NextResponse.json({
         message: 'HubSpot OAuth successful',
@@ -148,10 +152,14 @@ export async function GET(request: NextRequest) {
 // Manual import trigger
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth();
+    const { userId, orgId } = await auth();
     
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    if (!orgId) {
+      return NextResponse.json({ error: 'No active workspace' }, { status: 400 });
     }
 
     const { listId, forceFullSync = false } = await request.json();
@@ -172,7 +180,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Start import job
-    const jobId = await startHubSpotImportJob(userId, accessToken, config._id!, listId, forceFullSync);
+    const jobId = await startHubSpotImportJob(userId, orgId, accessToken, config._id!, listId, forceFullSync);
 
     return NextResponse.json({
       message: 'HubSpot import started',
@@ -189,7 +197,8 @@ export async function POST(request: NextRequest) {
 }
 
 async function startHubSpotImportJob(
-  userId: string, 
+  userId: string,
+  orgId: string,
   accessToken: string, 
   configId: ObjectId, 
   listId?: string, 
@@ -216,7 +225,7 @@ async function startHubSpotImportJob(
   const jobId = jobResult.insertedId;
 
   // Start background import (in production, use a proper job queue like Bull or Agenda)
-  importHubSpotContactsBackground(userId, accessToken, jobId, listId, forceFullSync)
+  importHubSpotContactsBackground(userId, orgId, accessToken, jobId, listId, forceFullSync)
     .catch(error => {
       console.error('Background import failed:', error);
       // Update job status to failed
@@ -237,6 +246,7 @@ async function startHubSpotImportJob(
 
 async function importHubSpotContactsBackground(
   userId: string,
+  orgId: string,
   accessToken: string,
   jobId: ObjectId,
   listId?: string,
@@ -313,7 +323,7 @@ async function importHubSpotContactsBackground(
           continue;
         }
 
-        const leadData = {
+        const leadData: ILead = {
           firstName: contact.properties.firstname || '',
           lastName: contact.properties.lastname || '',
           email: contact.properties.email || '',
@@ -326,7 +336,9 @@ async function importHubSpotContactsBackground(
             hubspotRecordId: contact.id,
           },
           listId: listId ? new ObjectId(listId) : undefined,
-          userId,
+          workspaceId: orgId!,
+          contactOwnerId: userId,
+          createdByUserId: userId,
           source: 'hubspot' as const,
           createdAt: new Date(contact.properties.createdate || contact.createdAt),
           updatedAt: new Date(contact.properties.lastmodifieddate || contact.updatedAt),

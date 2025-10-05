@@ -5,16 +5,19 @@ import { IList, ListCollection } from '@/models/List';
 
 export async function GET() {
   try {
-    const { userId } = await auth();
+    const { userId, orgId } = await auth();
     
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (!orgId) {
+      return NextResponse.json({ error: 'No active workspace' }, { status: 400 });
     }
 
     const { db } = await connectDB();
 
     const lists = await db.collection<IList>(ListCollection)
-      .find({ userId })
+      .find({ workspaceId: orgId })
       .sort({ createdAt: -1 })
       .toArray();
 
@@ -31,10 +34,13 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth();
+    const { userId, orgId } = await auth();
     
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (!orgId) {
+      return NextResponse.json({ error: 'No active workspace' }, { status: 400 });
     }
 
     const { name, description } = await request.json();
@@ -47,7 +53,7 @@ export async function POST(request: NextRequest) {
 
     // Check if list name already exists for this user
     const existingList = await db.collection<IList>(ListCollection)
-      .findOne({ userId, name });
+      .findOne({ workspaceId: orgId, name });
 
     if (existingList) {
       return NextResponse.json({ error: 'List name already exists' }, { status: 400 });
@@ -56,7 +62,8 @@ export async function POST(request: NextRequest) {
     const newList: IList = {
       name,
       description,
-      userId,
+      workspaceId: orgId,
+      createdByUserId: userId,
       leadCount: 0,
       createdAt: new Date(),
       updatedAt: new Date(),

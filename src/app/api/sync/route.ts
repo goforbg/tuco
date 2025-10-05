@@ -129,6 +129,9 @@ async function triggerHubSpotSync(
   _listId?: string, 
   _forceFullSync = false
 ): Promise<{ jobId: ObjectId }> {
+  // Suppress unused parameter warnings
+  void _listId;
+  void _forceFullSync;
   // For now, return a dummy job ID since we can't import the function
   // In a real implementation, you'd call the HubSpot import directly
   return { jobId: config._id! };
@@ -140,6 +143,9 @@ async function triggerSalesforceSync(
   _listId?: string, 
   _forceFullSync = false
 ): Promise<{ jobId: ObjectId }> {
+  // Suppress unused parameter warnings
+  void _listId;
+  void _forceFullSync;
   // For now, return a dummy job ID since we can't import the function
   // In a real implementation, you'd call the Salesforce import directly
   return { jobId: config._id! };
@@ -151,6 +157,9 @@ async function triggerGoogleSheetsSync(
   _listId?: string, 
   _forceFullSync = false
 ): Promise<{ jobId: ObjectId }> {
+  // Suppress unused parameter warnings
+  void _listId;
+  void _forceFullSync;
   // For now, return a dummy job ID since we can't import the function
   // In a real implementation, you'd call the Google Sheets import directly
   return { jobId: config._id! };

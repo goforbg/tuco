@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Upload, Download, MapPin, Users, FileText, CheckCircle, AlertCircle, Plus, Search } from 'lucide-react';
+import { Upload, Download, MapPin, Users, FileText, CheckCircle, AlertCircle, Plus, Search, X, Save, Trash2, ChevronLeft, ChevronRight, Info } from 'lucide-react';
+import { useOrganization } from '@clerk/nextjs';
 import Papa from 'papaparse';
 import DashboardLayout from '@/components/DashboardLayout';
 
@@ -70,21 +71,74 @@ export default function LeadsPage() {
   const [newListName, setNewListName] = useState('');
   const [newListDescription, setNewListDescription] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [sidebarLead, setSidebarLead] = useState<LeadData | null>(null);
+  const [isSavingLead, setIsSavingLead] = useState(false);
+  const [orgMembers, setOrgMembers] = useState<Array<{ id: string; email: string; name: string }>>([]);
+  const [customFieldEntries, setCustomFieldEntries] = useState<Array<{ key: string; value: string }>>([]);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { organization } = useOrganization();
 
   // Load existing leads and lists on component mount
   useEffect(() => {
     loadLeadsAndLists();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, selectedList]);
+
+  // Load organization members for owner dropdown
+  useEffect(() => {
+    let isMounted = true;
+    const loadMembers = async () => {
+      try {
+        if (!organization) return;
+        const memberships = await organization.getMemberships();
+        if (!isMounted) return;
+        const members = (memberships.data || []).map((m) => {
+          const publicUserData = m.publicUserData;
+          return {
+            id: publicUserData?.userId || '',
+            email: (publicUserData as { emailAddress?: string })?.emailAddress || '',
+            name: publicUserData?.firstName && publicUserData?.lastName ? `${publicUserData.firstName} ${publicUserData.lastName}` : (publicUserData?.firstName || publicUserData?.lastName || publicUserData?.identifier || 'Member')
+          };
+        });
+        setOrgMembers(members);
+      } catch {
+        // ignore
+      }
+    };
+    loadMembers();
+    return () => { isMounted = false; };
+  }, [organization]);
+
+  // Prepare editable custom fields when opening the sidebar
+  useEffect(() => {
+    if (sidebarLead && sidebarLead.customFields) {
+      const entries = Object.entries(sidebarLead.customFields).map(([key, value]) => ({ key, value: valueToString(value) }));
+      setCustomFieldEntries(entries);
+    } else {
+      setCustomFieldEntries([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarLead]);
 
   const loadLeadsAndLists = async () => {
     try {
       setIsLoading(true);
-      const response = await fetch('/api/leads');
+      const params = new URLSearchParams({ page: String(page), limit: '50' });
+      if (selectedList) params.set('listId', selectedList);
+      const response = await fetch(`/api/leads?${params.toString()}`);
       if (response.ok) {
         const data = await response.json();
         setLeads(data.leads || []);
         setLists(data.lists || []);
+        if (data.pagination) {
+          setTotalPages(data.pagination.totalPages || 1);
+        }
+        // Reset selection on new page/filter
+        setSelectedIds([]);
       }
     } catch (error) {
       console.error('Error loading leads:', error);
@@ -232,6 +286,112 @@ export default function LeadsPage() {
     }
   };
 
+  const toggleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedIds(leads.map(l => l._id!).filter(Boolean));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  const toggleSelectOne = (id?: string) => {
+    if (!id) return;
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.length === 0) return;
+    if (!confirm(`Delete ${selectedIds.length} selected lead(s)?`)) return;
+    try {
+      const res = await fetch('/api/leads', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds })
+      });
+      if (res.ok) {
+        await loadLeadsAndLists();
+      }
+    } catch (e) {
+      console.error('Delete failed', e);
+    }
+  };
+
+  const listIdToName = (id?: string) => {
+    if (!id) return 'CSV Import';
+    const list = lists.find(l => l._id === id);
+    return list ? list.name : 'CSV Import';
+  };
+
+  const formatDate = (iso: string) => {
+    try {
+      const date = new Date(iso);
+      const day = date.getDate().toString().padStart(2, '0');
+      const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const month = monthNames[date.getMonth()];
+      const year = date.getFullYear();
+      return `${day}-${month}-${year}`;
+    } catch {
+      return iso;
+    }
+  };
+
+  const saveSidebarLead = async () => {
+    if (!sidebarLead || !sidebarLead._id) return;
+    setIsSavingLead(true);
+    try {
+      const customFieldsObject = customFieldEntries.reduce((acc: Record<string, string>, item) => {
+        const k = item.key.trim();
+        if (k !== '') acc[k] = item.value;
+        return acc;
+      }, {});
+      const res = await fetch('/api/leads', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ _id: sidebarLead._id, update: {
+          firstName: sidebarLead.firstName,
+          lastName: sidebarLead.lastName,
+          email: sidebarLead.email,
+          phone: sidebarLead.phone,
+          companyName: sidebarLead.companyName,
+          jobTitle: sidebarLead.jobTitle,
+          linkedinUrl: sidebarLead.linkedinUrl,
+          notes: sidebarLead.notes,
+          contactOwnerId: (sidebarLead as LeadData & { contactOwnerId?: string }).contactOwnerId
+          ,customFields: Object.keys(customFieldsObject).length > 0 ? customFieldsObject : undefined
+        } })
+      });
+      if (res.ok) {
+        await loadLeadsAndLists();
+        setSidebarLead(null);
+      }
+    } catch (e) {
+      console.error('Update failed', e);
+    } finally {
+      setIsSavingLead(false);
+    }
+  };
+
+  const deleteSingleLead = async (id?: string) => {
+    if (!id) return;
+    if (!confirm('Delete this lead?')) return;
+    try {
+      const res = await fetch('/api/leads', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [id] }) });
+      if (res.ok) {
+        await loadLeadsAndLists();
+        setSidebarLead(null);
+      }
+    } catch (e) {
+      console.error('Delete failed', e);
+    }
+  };
+
+  const valueToString = (value: unknown): string => {
+    if (value === null || value === undefined) return '';
+    if (value instanceof Date) return formatDate(value.toString());
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  };
+
   const getCsvHeaders = () => {
     if (csvData.length === 0) return [];
     return Object.keys(csvData[0]);
@@ -249,19 +409,19 @@ export default function LeadsPage() {
     return matchesSearch && matchesList;
   });
 
-  const getSourceIcon = (source: string) => {
-    switch (source) {
-      case 'csv': return <FileText className="w-4 h-4" />;
-      case 'hubspot': return <div className="w-4 h-4 bg-orange-500 rounded" />;
-      case 'salesforce': return <div className="w-4 h-4 bg-blue-500 rounded" />;
-      case 'google_sheets': return <div className="w-4 h-4 bg-green-500 rounded" />;
-      default: return <Users className="w-4 h-4" />;
-    }
-  };
+  // const getSourceIcon = (source: string) => {
+  //   switch (source) {
+  //     case 'csv': return <FileText className="w-4 h-4" />;
+  //     case 'hubspot': return <div className="w-4 h-4 bg-orange-500 rounded" />;
+  //     case 'salesforce': return <div className="w-4 h-4 bg-blue-500 rounded" />;
+  //     case 'google_sheets': return <div className="w-4 h-4 bg-green-500 rounded" />;
+  //     default: return <Users className="w-4 h-4" />;
+  //   }
+  // };
 
   return (
     <DashboardLayout>
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="max-w-6xl mx-auto space-y-6 pb-24">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -287,24 +447,24 @@ export default function LeadsPage() {
       </div>
 
       {/* Lists and Search Section */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      <div className="tuco-section p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-900">Your Leads</h2>
           <div className="flex items-center space-x-3">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-              <input
+            <input
                 type="text"
                 placeholder="Search leads..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-body-small"
+              className="pl-10 pr-4 py-2 tuco-input"
               />
             </div>
             <select
               value={selectedList}
-              onChange={(e) => setSelectedList(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-body-small"
+              onChange={(e) => { setSelectedList(e.target.value); setPage(1); }}
+              className="tuco-select"
             >
               <option value="">All Lists</option>
               {lists.map((list) => (
@@ -313,9 +473,17 @@ export default function LeadsPage() {
                 </option>
               ))}
             </select>
+            {selectedIds.length > 0 && (
+              <button
+                onClick={handleDeleteSelected}
+                className="flex items-center px-3 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4 mr-1" /> Delete ({selectedIds.length})
+              </button>
+            )}
             <button
               onClick={() => setShowCreateList(true)}
-              className="flex items-center px-3 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors cursor-pointer"
+              className="flex shrink-0 items-center px-3 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors cursor-pointer"
             >
               <Plus className="w-4 h-4 mr-1" />
               <span className="text-body-small font-body-small">New List</span>
@@ -374,6 +542,7 @@ export default function LeadsPage() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
+                  <th className="px-6 py-3"><input type="checkbox" aria-label="Select all" checked={selectedIds.length === leads.length && leads.length > 0} onChange={(e) => toggleSelectAll(e.target.checked)} /></th>
                   <th className="px-6 py-3 text-left text-body-small font-body-small text-gray-500 uppercase tracking-wider">
                     Name
                   </th>
@@ -387,41 +556,63 @@ export default function LeadsPage() {
                     Company
                   </th>
                   <th className="px-6 py-3 text-left text-body-small font-body-small text-gray-500 uppercase tracking-wider">
-                    Source
+                    List
                   </th>
                   <th className="px-6 py-3 text-left text-body-small font-body-small text-gray-500 uppercase tracking-wider">
                     Created
                   </th>
+                  <th className="px-6 py-3 text-right text-body-small font-body-small text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredLeads.map((lead) => (
-                  <tr key={lead._id}>
-                    <td className="px-6 py-4 whitespace-nowrap text-body-small font-body-small text-gray-900">
+                  <tr key={lead._id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4"><input type="checkbox" checked={selectedIds.includes(lead._id!)} onClick={(e) => e.stopPropagation()} onChange={() => toggleSelectOne(lead._id)} /></td>
+                    <td className="px-6 py-4 whitespace-nowrap text-body-small font-body-small text-gray-900 cursor-pointer" onClick={() => setSidebarLead(lead)}>
                       {lead.firstName} {lead.lastName}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500 cursor-pointer" onClick={() => setSidebarLead(lead)}>
                       {lead.email}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500 cursor-pointer" onClick={() => setSidebarLead(lead)}>
                       {lead.phone}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500 cursor-pointer" onClick={() => setSidebarLead(lead)}>
                       {lead.companyName || '-'}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500">
-                      <div className="flex items-center">
-                        {getSourceIcon(lead.source)}
-                        <span className="ml-2 capitalize">{lead.source.replace('_', ' ')}</span>
-                      </div>
+                    <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500 cursor-pointer" onClick={() => setSidebarLead(lead)}>
+                      {listIdToName(lead.listId)}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500">
-                      {new Date(lead.createdAt).toLocaleDateString()}
+                    <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500 cursor-pointer" onClick={() => setSidebarLead(lead)}>
+                      {formatDate(lead.createdAt)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-body-small text-gray-500 space-x-2">
+                      <a href={`sms:${lead.phone}`} className="px-3 py-1 border border-gray-300 rounded-lg hover:bg-gray-50">Send</a>
+                      <span className="relative inline-block">
+                        <button onClick={() => setOpenMenuId(openMenuId === lead._id ? null : (lead._id || null))} className="px-2 py-1 border border-gray-300 rounded-lg hover:bg-gray-50">•••</button>
+                        {openMenuId === lead._id && (
+                          <div className="absolute right-0 mt-2 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20 text-left">
+                            <button onClick={() => { setSidebarLead(lead); setOpenMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-gray-50">Edit</button>
+                            <a href={`sms:${lead.phone}`} className="block px-3 py-2 hover:bg-gray-50">Send iMessage</a>
+                            <button onClick={() => { deleteSingleLead(lead._id); setOpenMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-gray-50 text-red-600">Delete</button>
+                          </div>
+                        )}
+                      </span>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {/* Pagination */}
+            <div className="flex items-center justify-between mt-4">
+              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="flex items-center px-3 py-2 border border-gray-300 rounded-lg disabled:opacity-50">
+                <ChevronLeft className="w-4 h-4 mr-1" /> Prev
+              </button>
+              <div className="text-gray-600">Page {page} of {totalPages}</div>
+              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="flex items-center px-3 py-2 border border-gray-300 rounded-lg disabled:opacity-50">
+                Next <ChevronRight className="w-4 h-4 ml-1" />
+              </button>
+            </div>
           </div>
         ) : (
           <div className="text-center py-8">
@@ -441,8 +632,9 @@ export default function LeadsPage() {
         )}
       </div>
 
-      {/* Upload Section */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      {/* Upload Section - show only when no leads */}
+      {(!isLoading && leads.length === 0) && (
+      <div className="tuco-section p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Upload CSV File</h2>
         
         <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
@@ -483,6 +675,7 @@ export default function LeadsPage() {
           )}
         </div>
       </div>
+      )}
 
       {/* Field Mapping */}
       {csvData.length > 0 && (
@@ -636,6 +829,121 @@ export default function LeadsPage() {
           </div>
         </div>
       </div>
+      
+      {/* Slide-in Lead Sidebar */}
+      {sidebarLead && (
+        <div className="fixed inset-0 z-50 flex">
+          {/* overlay */}
+          <div className="flex-1 bg-black/20" onClick={() => setSidebarLead(null)} />
+          {/* right drawer */}
+          <div className="w-full sm:w-[420px] h-full bg-white border-l border-gray-200 border-0.5 shadow-2xl transform transition-transform translate-x-0">
+            <div className="p-4 flex items-center justify-between border-b border-gray-200 border-0.5 bg-white/60 backdrop-blur sticky top-0 z-10">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Edit Lead</h3>
+                <div className="text-xs text-gray-500 mt-1 flex items-center"><Info className="w-3 h-3 mr-1" /> Created {formatDate(sidebarLead.createdAt)} · List: {listIdToName(sidebarLead.listId)}</div>
+              </div>
+              <div className="flex items-center space-x-2">
+                <button onClick={() => deleteSingleLead(sidebarLead._id)} className="px-3 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50" title="Delete"><Trash2 className="w-4 h-4" /></button>
+                <button onClick={() => setSidebarLead(null)} className="p-2 text-gray-600 hover:text-gray-900"><X className="w-5 h-5" /></button>
+              </div>
+            </div>
+            <div className="p-4 space-y-4 overflow-y-auto h-[calc(100%-112px)]">
+              <div className="grid grid-cols-1 gap-3">
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">First Name</label>
+                  <input value={sidebarLead.firstName} onChange={(e) => setSidebarLead({ ...sidebarLead, firstName: e.target.value })} className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">Last Name</label>
+                  <input value={sidebarLead.lastName} onChange={(e) => setSidebarLead({ ...sidebarLead, lastName: e.target.value })} className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">Email</label>
+                  <input value={sidebarLead.email} onChange={(e) => setSidebarLead({ ...sidebarLead, email: e.target.value })} className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">Phone</label>
+                  <input value={sidebarLead.phone} onChange={(e) => setSidebarLead({ ...sidebarLead, phone: e.target.value })} className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">Company</label>
+                  <input value={sidebarLead.companyName || ''} onChange={(e) => setSidebarLead({ ...sidebarLead, companyName: e.target.value })} className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">Job Title</label>
+                  <input value={sidebarLead.jobTitle || ''} onChange={(e) => setSidebarLead({ ...sidebarLead, jobTitle: e.target.value })} className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">LinkedIn URL</label>
+                  <input value={sidebarLead.linkedinUrl || ''} onChange={(e) => setSidebarLead({ ...sidebarLead, linkedinUrl: e.target.value })} className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">Contact Owner</label>
+                  <select
+                    value={(sidebarLead as LeadData & { contactOwnerId?: string }).contactOwnerId || ''}
+                    onChange={(e) => setSidebarLead({ ...sidebarLead, contactOwnerId: e.target.value } as LeadData & { contactOwnerId?: string })}
+                    className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                  >
+                    <option value="">Unassigned</option>
+                    {orgMembers.map(m => (
+                      <option key={m.id} value={m.id}>{m.name} ({m.email})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-700 mb-1">Notes</label>
+                  <textarea value={sidebarLead.notes || ''} onChange={(e) => setSidebarLead({ ...sidebarLead, notes: e.target.value })} className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+              </div>
+
+              {/* Additional info */}
+              {(sidebarLead.customFields || sidebarLead.integrationIds) && (
+                <div className="mt-2">
+                  <h4 className="text-sm font-medium text-gray-900 mb-2">Additional Information</h4>
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-2">
+                    <div className="text-xs font-medium text-gray-700 mb-2">Custom Fields</div>
+                    <div className="space-y-2">
+                      {customFieldEntries.map((entry, idx) => (
+                        <div key={idx} className="grid grid-cols-2 gap-2">
+                          <input className="tuco-input" value={entry.key} onChange={(e) => {
+                            const next = [...customFieldEntries];
+                            next[idx] = { ...entry, key: e.target.value };
+                            setCustomFieldEntries(next);
+                          }} placeholder="Field name" />
+                          <input className="tuco-input" value={entry.value} onChange={(e) => {
+                            const next = [...customFieldEntries];
+                            next[idx] = { ...entry, value: e.target.value };
+                            setCustomFieldEntries(next);
+                          }} placeholder="Value" />
+                        </div>
+                      ))}
+                      <div>
+                        <button onClick={() => setCustomFieldEntries(prev => [...prev, { key: '', value: '' }])} className="px-3 py-1 border border-gray-300 rounded-lg hover:bg-gray-50">Add Field</button>
+                      </div>
+                    </div>
+                  </div>
+                  {sidebarLead.integrationIds && (
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                      <div className="text-xs font-medium text-gray-700 mb-1">Integrations</div>
+                      <div className="text-xs text-gray-700 space-y-1">
+                        {Object.entries(sidebarLead.integrationIds).map(([k,v]) => (
+                          <div key={k} className="flex justify-between"><span className="text-gray-500">{k}</span><span className="ml-4 break-all">{String(v)}</span></div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-200 border-0.5 bg-white flex justify-end sticky bottom-0">
+              <div className="space-x-2 flex justify-between items-center w-full">
+                <button onClick={() => setSidebarLead(null)} className="px-4 py-2 border rounded-lg">Cancel</button>
+                <button onClick={saveSidebarLead} disabled={isSavingLead} className="px-4 py-2 bg-primary text-white rounded-lg disabled:opacity-50 flex items-center"><Save className="w-4 h-4 mr-2" /> {isSavingLead ? 'Updating...' : 'Update'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     </DashboardLayout>
   );

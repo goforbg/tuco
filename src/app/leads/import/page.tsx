@@ -123,6 +123,13 @@ export default function LeadsImportPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [importSummary, setImportSummary] = useState<{ savedCount: number; invalidCount: number; listName?: string } | null>(null);
+  
+  // Lists selection
+  const [lists, setLists] = useState<Array<{ _id: string; name: string }>>([]);
+  const [selectedListId, setSelectedListId] = useState<string>('');
+  const [listMode, setListMode] = useState<'existing' | 'new'>('existing');
+  const [newListName, setNewListName] = useState('');
   
   // Integration states
   const [integrationCredentials, setIntegrationCredentials] = useState<{
@@ -155,6 +162,9 @@ export default function LeadsImportPage() {
     setIsSaving(false);
     setUploadStatus('idle');
     setErrorMessage('');
+    setImportSummary(null);
+    setSelectedListId('');
+    setNewListName('');
     setIntegrationCredentials({
       apiKey: '',
       accessToken: '',
@@ -165,11 +175,32 @@ export default function LeadsImportPage() {
     setConnectionStatus('idle');
   };
 
+  // Load lists when entering upload step
+  const loadLists = async () => {
+    try {
+      const res = await fetch('/api/lists');
+      if (res.ok) {
+        const data = await res.json();
+        const fetched = (data.lists || []).map((l: { _id: string; name: string }) => ({ _id: l._id, name: l.name }));
+        setLists(fetched);
+        // Default list mode based on availability
+        if (fetched.length === 0) {
+          setListMode('new');
+        } else {
+          setListMode('existing');
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   // Handle option selection
   const handleOptionSelect = (optionId: string) => {
     setSelectedOption(optionId);
     if (optionId === 'csv') {
       setCurrentStep('upload');
+      loadLists();
     } else {
       setCurrentStep('upload'); // For integrations, we'll show their setup
     }
@@ -479,27 +510,22 @@ export default function LeadsImportPage() {
   // Format phone number to ensure country code and proper format
   const formatPhoneNumber = (phone: string): string => {
     if (!phone) return '';
-    
-    // Remove all non-digit characters
+    // Always strip non-digits first
     const digitsOnly = phone.replace(/\D/g, '');
-    
-    // If it starts with 1 and is 11 digits, it's likely US/Canada
+    // US/Canada with leading 1 and 11 digits
     if (digitsOnly.length === 11 && digitsOnly.startsWith('1')) {
       return `+${digitsOnly}`;
     }
-    
-    // If it's 10 digits and doesn't start with country code, assume US
+    // 10 digits -> assume US
     if (digitsOnly.length === 10) {
       return `+1${digitsOnly}`;
     }
-    
-    // If it already has country code (starts with + or has 11+ digits)
-    if (phone.startsWith('+') || digitsOnly.length >= 11) {
-      return phone.startsWith('+') ? phone : `+${digitsOnly}`;
+    // If we have 11-15 digits with no leading plus, prefix '+'
+    if (digitsOnly.length >= 11 && digitsOnly.length <= 15) {
+      return `+${digitsOnly}`;
     }
-    
-    // Default: add +1 for US if no country code detected
-    return `+1${digitsOnly}`;
+    // Otherwise return as-is cleaned (may be invalid and caught by validator)
+    return digitsOnly ? `+${digitsOnly}` : '';
   };
 
   // Format email to ensure proper format
@@ -656,7 +682,8 @@ export default function LeadsImportPage() {
         },
         body: JSON.stringify({ 
           leads: processedLeads,
-          source: 'csv_import'
+          source: 'csv_import',
+          listId: selectedListId || undefined
         }),
       });
 
@@ -666,7 +693,8 @@ export default function LeadsImportPage() {
       }
 
       const result = await response.json();
-      
+      const listName = lists.find(l => l._id === result.listId)?.name;
+      setImportSummary({ savedCount: result.savedCount || processedLeads.length, invalidCount: Math.max(0, (csvData.length || 0) - processedLeads.length), listName });
       // Handle partial success (some leads saved, some failed due to duplicates)
       if (result.savedCount < processedLeads.length) {
         // const duplicateCount = processedLeads.length - result.savedCount;
@@ -799,7 +827,7 @@ export default function LeadsImportPage() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl mx-auto pb-24">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -938,12 +966,76 @@ export default function LeadsImportPage() {
               </button>
 
               {uploadStatus === 'success' && (
-                      <div className="mt-6 flex items-center justify-center text-green-600">
-                  <CheckCircle className="w-5 h-5 mr-2" />
-                        <span className="text-sm font-medium">
-                    File uploaded successfully! {csvData.length} records found.
-                  </span>
-                </div>
+                <>
+                  <div className="mt-6 flex items-center justify-center text-green-600">
+                    <CheckCircle className="w-5 h-5 mr-2" />
+                    <span className="text-sm font-medium">
+                      File uploaded successfully! {csvData.length} records found.
+                    </span>
+                  </div>
+                  {/* List selection required */}
+                  <div className="mt-6 mx-auto max-w-md text-left">
+                    <label className="block text-sm font-medium text-gray-700 mb-3">Where should these leads go?</label>
+                    <div className="space-y-3">
+                      <label className="flex items-center space-x-3">
+                        <input type="radio" name="listMode" className="h-4 w-4" checked={listMode==='existing'} onChange={() => setListMode('existing')} />
+                        <span className="text-sm text-gray-800">Add to existing list</span>
+                      </label>
+                      {listMode==='existing' && (
+                        <select
+                          value={selectedListId}
+                          onChange={(e) => setSelectedListId(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                        >
+                          <option value="">Select a list…</option>
+                          {lists.map((l) => (
+                            <option key={l._id} value={l._id}>{l.name}</option>
+                          ))}
+                        </select>
+                      )}
+
+                      <label className="flex items-center space-x-3 mt-2">
+                        <input type="radio" name="listMode" className="h-4 w-4" checked={listMode==='new'} onChange={() => setListMode('new')} />
+                        <span className="text-sm text-gray-800">Create a new list</span>
+                      </label>
+                      {listMode==='new' && (
+                        <input
+                          type="text"
+                          value={newListName}
+                          onChange={(e) => setNewListName(e.target.value)}
+                          placeholder="Enter new list name"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                        />
+                      )}
+                    </div>
+
+                    <div className="mt-6">
+                      <button
+                        onClick={async () => {
+                          // Require selection
+                          if (listMode==='existing') {
+                            if (!selectedListId) return;
+                            setCurrentStep('mapping');
+                            return;
+                          }
+                          if (!newListName.trim()) return;
+                          const res = await fetch('/api/lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newListName }) });
+                          if (res.ok) {
+                            const data = await res.json();
+                            setLists((prev) => [{ _id: data.list._id, name: data.list.name }, ...prev]);
+                            setSelectedListId(data.list._id);
+                            setNewListName('');
+                            setCurrentStep('mapping');
+                          }
+                        }}
+                        disabled={(listMode==='existing' && !selectedListId) || (listMode==='new' && !newListName.trim())}
+                        className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50"
+                      >
+                        Continue to Mapping
+                      </button>
+                    </div>
+                  </div>
+                </>
               )}
 
               {uploadStatus === 'error' && (
@@ -1256,19 +1348,22 @@ export default function LeadsImportPage() {
             </div>
           )}
 
-          {/* Step 5: Confirmation */}
-          {currentStep === 'confirm' && (
+          {/* Step 5: Complete */}
+          {currentStep === 'complete' && (
             <div className="p-8 text-center">
               <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
                 <CheckCircle className="w-8 h-8 text-green-600" />
               </div>
               
-              <h2 className="text-2xl font-semibold text-gray-900 mb-2">Import Complete!</h2>
-              <p className="text-gray-600 mb-8">
-                Successfully imported {processedLeads.length} leads from {fileName}
-              </p>
+              <h2 className="text-2xl font-semibold text-gray-900 mb-2">Import Complete</h2>
+              <div className="mx-auto max-w-md bg-gray-50 rounded-lg p-4 text-left">
+                <div className="flex justify-between py-2"><span className="text-gray-600">File</span><span className="text-gray-900">{fileName}</span></div>
+                <div className="flex justify-between py-2"><span className="text-gray-600">Saved</span><span className="text-green-700 font-medium">{importSummary?.savedCount ?? processedLeads.length}</span></div>
+                <div className="flex justify-between py-2"><span className="text-gray-600">Invalid</span><span className="text-red-600">{importSummary?.invalidCount ?? 0}</span></div>
+                <div className="flex justify-between py-2"><span className="text-gray-600">List</span><span className="text-gray-900">{importSummary?.listName || 'CSV Import'}</span></div>
+              </div>
 
-              <div className="flex justify-center space-x-4">
+              <div className="flex justify-center space-x-4 mt-8">
                 <button
                   onClick={() => window.location.href = '/leads'}
                   className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium"

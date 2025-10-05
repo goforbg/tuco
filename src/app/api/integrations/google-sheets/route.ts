@@ -11,7 +11,7 @@ const GOOGLE_SHEETS_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth();
+    const { userId, orgId } = await auth();
     
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -104,7 +104,9 @@ export async function POST(request: NextRequest) {
             googleSheetsRowId: `${index + 2}`, // Row number in sheet (index + 2 because we filtered out header)
           },
           listId: listId ? new ObjectId(listId) : undefined,
-          userId,
+          workspaceId: orgId!,
+          contactOwnerId: userId,
+          createdByUserId: userId,
           source: 'google_sheets' as const,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -170,15 +172,16 @@ async function importGoogleSheetsData(accessToken: string, spreadsheetId: string
   }
 }
 
-async function startGoogleSheetsImportJob(
-  _userId: string,
-  _accessToken: string,
-  _spreadsheetId: string,
-  _sheetName: string,
-  configId: ObjectId,
-  _listId?: string
-): Promise<ObjectId> {
-  // For now, just return a dummy ObjectId since Google Sheets doesn't have background processing
-  // In a real implementation, you'd create an import job and process it
-  return configId;
-}
+// This function is currently unused but kept for future implementation
+// async function startGoogleSheetsImportJob(
+//   _userId: string,
+//   _accessToken: string,
+//   _spreadsheetId: string,
+//   _sheetName: string,
+//   configId: ObjectId,
+//   _listId?: string
+// ): Promise<ObjectId> {
+//   // For now, just return a dummy ObjectId since Google Sheets doesn't have background processing
+//   // In a real implementation, you'd create an import job and process it
+//   return configId;
+// }

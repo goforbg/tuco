@@ -19,10 +19,14 @@ const SALESFORCE_REDIRECT_URI = process.env.SALESFORCE_REDIRECT_URI || `${proces
 // OAuth flow initiation
 export async function GET(request: NextRequest) {
   try {
-    const { userId } = await auth();
+    const { userId, orgId } = await auth();
     
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    if (!orgId) {
+      return NextResponse.json({ error: 'No active workspace' }, { status: 400 });
     }
 
     const { searchParams } = new URL(request.url);
@@ -30,7 +34,7 @@ export async function GET(request: NextRequest) {
 
     if (action === 'oauth') {
       // Initiate OAuth flow
-      const state = Buffer.from(JSON.stringify({ userId })).toString('base64');
+      const state = Buffer.from(JSON.stringify({ userId, orgId })).toString('base64');
       const scopes = 'api refresh_token';
       
       const authUrl = `${SALESFORCE_LOGIN_URL}/services/oauth2/authorize?` + new URLSearchParams({
@@ -54,7 +58,7 @@ export async function GET(request: NextRequest) {
 
       // Decode state to get userId
       const stateData = JSON.parse(Buffer.from(state, 'base64').toString());
-      const { userId: stateUserId } = stateData;
+      const { userId: stateUserId, orgId: stateOrgId } = stateData;
 
       // Exchange code for access token
       const tokenResponse = await fetch(`${SALESFORCE_LOGIN_URL}/services/oauth2/token`, {
@@ -126,7 +130,7 @@ export async function GET(request: NextRequest) {
       }
 
       // Start background import job
-      await startSalesforceImportJob(stateUserId, access_token, instance_url, configId);
+      await startSalesforceImportJob(stateUserId, stateOrgId, access_token, instance_url, configId);
 
       return NextResponse.json({
         message: 'Salesforce OAuth successful',
@@ -149,10 +153,14 @@ export async function GET(request: NextRequest) {
 // Manual import trigger
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth();
+    const { userId, orgId } = await auth();
     
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    if (!orgId) {
+      return NextResponse.json({ error: 'No active workspace' }, { status: 400 });
     }
 
     const { listId, forceFullSync = false } = await request.json();
@@ -173,7 +181,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Start import job
-    const jobId = await startSalesforceImportJob(userId, accessToken, instanceUrl, config._id!, listId, forceFullSync);
+    const jobId = await startSalesforceImportJob(userId, orgId, accessToken, instanceUrl, config._id!, listId, forceFullSync);
 
     return NextResponse.json({
       message: 'Salesforce import started',
@@ -190,7 +198,8 @@ export async function POST(request: NextRequest) {
 }
 
 async function startSalesforceImportJob(
-  userId: string, 
+  userId: string,
+  orgId: string,
   accessToken: string, 
   instanceUrl: string,
   configId: ObjectId, 
@@ -218,7 +227,7 @@ async function startSalesforceImportJob(
   const jobId = jobResult.insertedId;
 
   // Start background import
-  importSalesforceLeadsBackground(userId, accessToken, instanceUrl, jobId, configId, listId, forceFullSync)
+  importSalesforceLeadsBackground(userId, orgId, accessToken, instanceUrl, jobId, configId, listId, forceFullSync)
     .catch(error => {
       console.error('Background import failed:', error);
       // Update job status to failed
@@ -239,6 +248,7 @@ async function startSalesforceImportJob(
 
 async function importSalesforceLeadsBackground(
   userId: string,
+  orgId: string,
   accessToken: string,
   instanceUrl: string,
   jobId: ObjectId,
@@ -314,7 +324,7 @@ async function importSalesforceLeadsBackground(
           continue;
         }
 
-        const leadData = {
+        const leadData: ILead = {
           firstName: lead.FirstName || '',
           lastName: lead.LastName || '',
           email: lead.Email || '',
@@ -327,7 +337,9 @@ async function importSalesforceLeadsBackground(
             salesforceRecordId: lead.Id,
           },
           listId: listId ? new ObjectId(listId) : undefined,
-          userId,
+          workspaceId: orgId!,
+          contactOwnerId: userId,
+          createdByUserId: userId,
           source: 'salesforce' as const,
           createdAt: new Date(lead.CreatedDate),
           updatedAt: new Date(lead.LastModifiedDate),

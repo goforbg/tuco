@@ -33,6 +33,34 @@ body {
   font-feature-settings: 'rlig' 1, 'calt' 1;
 }
 
+/* Global base form styles (apply across the app) */
+@layer base {
+  input, 
+  input[type='text'],
+  input[type='email'],
+  input[type='tel'],
+  input[type='password'],
+  input[type='url'],
+  input[type='search'],
+  select,
+  textarea {
+    @apply w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-[13px] text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary/30;
+  }
+
+  label {
+    @apply block text-sm font-medium text-gray-800 mb-1;
+  }
+
+  button {
+    @apply cursor-pointer; 
+  }
+
+  border {
+    @apply border-gray-200;
+  }
+
+}
+
 /* Explicit utilities */
 @layer utilities {
   .text-body-small {
@@ -46,6 +74,28 @@ body {
     letter-spacing: 0;
   }
   .icon-24 { width: 16px; height: 16px; }
+}
+
+/* Component styles */
+@layer components {
+  .tuco-label {
+    @apply block text-sm font-medium text-gray-800 mb-1;
+  }
+  .tuco-input {
+    @apply w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-[13px] text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-shadow;
+  }
+  .tuco-select {
+    @apply w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-[13px] text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent;
+  }
+  .tuco-textarea {
+    @apply w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-[13px] text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent;
+  }
+  .tuco-section {
+    @apply bg-white rounded-xl border border-gray-200;
+  }
+  .tuco-section-header {
+    @apply text-lg font-semibold text-gray-900;
+  }
 }
 
 /* Custom scrollbar */

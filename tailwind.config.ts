@@ -7,6 +7,9 @@ const config: Config = {
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
   ],
   theme: {
+    borderColor: {
+      DEFAULT: 'oklch(92.8% 0.006 264.531)', // 👈 custom OKLCH border color
+    },
     extend: {
       colors: {
         primary: {

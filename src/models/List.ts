@@ -7,8 +7,11 @@ export interface IList {
   name: string;
   description?: string;
   
+  // Tenant / Ownership
+  workspaceId: string; // Clerk Organization ID (workspace)
+  createdByUserId: string; // Clerk user ID who created the list
+
   // Metadata
-  userId: string; // Clerk user ID
   leadCount: number; // Cached count for performance
   createdAt: Date;
   updatedAt: Date;

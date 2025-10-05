@@ -30,8 +30,12 @@ export interface ILead {
   // List Association
   listId?: ObjectId; // Reference to the list this lead belongs to
   
+  // Tenant / Ownership
+  workspaceId: string; // Clerk Organization ID (workspace)
+  contactOwnerId?: string; // Clerk user ID of assignee/owner within workspace
+  createdByUserId: string; // Clerk user ID who created the lead
+
   // Metadata
-  userId: string; // Clerk user ID
   source: 'csv' | 'google_sheets' | 'salesforce' | 'hubspot' | 'manual';
   createdAt: Date;
   updatedAt: Date;

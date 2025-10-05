@@ -7,10 +7,13 @@ import { ObjectId } from 'mongodb';
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth();
+    const { userId, orgId } = await auth();
     
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (!orgId) {
+      return NextResponse.json({ error: 'No active workspace' }, { status: 400 });
     }
 
     const { leads, listId, source = 'csv' } = await request.json();
@@ -21,10 +24,10 @@ export async function POST(request: NextRequest) {
 
     const { db } = await connectDB();
 
-    // Validate listId if provided
+    // Validate listId if provided (must belong to same workspace)
     if (listId) {
       const list = await db.collection<IList>(ListCollection)
-        .findOne({ _id: new ObjectId(listId), userId });
+        .findOne({ _id: new ObjectId(listId), workspaceId: orgId });
       
       if (!list) {
         return NextResponse.json({ error: 'List not found' }, { status: 404 });
@@ -32,19 +35,26 @@ export async function POST(request: NextRequest) {
     }
 
     // Process and validate leads
-    const processedLeads = leads.map((lead: Record<string, string | number | boolean>) => {
+    const processedLeads = leads.map((lead: Record<string, unknown>) => {
       // Validate required fields
       if (!lead.firstName || !lead.lastName || !lead.email || !lead.phone) {
         throw new Error('Missing required fields: firstName, lastName, email, phone');
       }
 
-      // Extract custom fields (any field not in standard fields)
-      const standardFields = ['firstName', 'lastName', 'email', 'phone', 'companyName', 'jobTitle', 'linkedinUrl', 'notes'];
+      // Extract custom fields (any field not in standard fields) and merge if provided
+      const standardFields = ['firstName', 'lastName', 'email', 'phone', 'companyName', 'jobTitle', 'linkedinUrl', 'notes', 'customFields'];
       const customFields: { [key: string]: string | number | boolean } = {};
-      
+
+      // Merge pre-parsed customFields if sent by client
+      if (lead.customFields && typeof lead.customFields === 'object') {
+        Object.entries(lead.customFields as Record<string, string | number | boolean>).forEach(([k, v]) => {
+          if (v !== undefined && v !== '') customFields[k] = v as string | number | boolean;
+        });
+      }
+
       Object.keys(lead).forEach(key => {
         if (!standardFields.includes(key) && lead[key] !== undefined && lead[key] !== '') {
-          customFields[key] = lead[key];
+          customFields[key] = lead[key] as string | number | boolean;
         }
       });
 
@@ -59,7 +69,9 @@ export async function POST(request: NextRequest) {
         notes: lead.notes ? String(lead.notes) : undefined,
         customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
         listId: listId ? new ObjectId(listId) : undefined,
-        userId,
+        workspaceId: orgId,
+        contactOwnerId: (lead as Record<string, unknown>).contactOwnerId ? String((lead as Record<string, unknown>).contactOwnerId) : userId,
+        createdByUserId: userId,
         source,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -72,7 +84,7 @@ export async function POST(request: NextRequest) {
     // Update list lead count if listId provided
     if (listId) {
       await db.collection<IList>(ListCollection).updateOne(
-        { _id: new ObjectId(listId) },
+        { _id: new ObjectId(listId), workspaceId: orgId },
         { 
           $inc: { leadCount: result.insertedCount },
           $set: { updatedAt: new Date() }
@@ -82,7 +94,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ 
       message: 'Leads saved successfully', 
-      count: result.insertedCount 
+      savedCount: result.insertedCount,
+      listId: listId || null
     });
 
   } catch (error) {
@@ -96,10 +109,13 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
-    const { userId } = await auth();
+    const { userId, orgId } = await auth();
     
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (!orgId) {
+      return NextResponse.json({ error: 'No active workspace' }, { status: 400 });
     }
 
     const { searchParams } = new URL(request.url);
@@ -111,7 +127,7 @@ export async function GET(request: NextRequest) {
     const { db } = await connectDB();
 
     // Build query
-    const query: Record<string, string | ObjectId> = { userId };
+    const query: Record<string, string | ObjectId> = { workspaceId: orgId };
     if (listId) {
       query.listId = new ObjectId(listId);
     }
@@ -129,7 +145,7 @@ export async function GET(request: NextRequest) {
 
     // Get lists for this user
     const lists = await db.collection<IList>(ListCollection)
-      .find({ userId })
+      .find({ workspaceId: orgId })
       .sort({ createdAt: -1 })
       .toArray();
 
@@ -148,6 +164,100 @@ export async function GET(request: NextRequest) {
     console.error('Error fetching leads:', error);
     return NextResponse.json(
       { error: 'Internal server error' }, 
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const { userId, orgId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (!orgId) {
+      return NextResponse.json({ error: 'No active workspace' }, { status: 400 });
+    }
+
+    const { _id, update } = await request.json();
+    if (!_id || !update || typeof update !== 'object') {
+      return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
+    }
+
+    const { db } = await connectDB();
+    // If contactOwnerId is being set, default validate format (optional: validate membership via Clerk)
+    if (update.contactOwnerId) {
+      update.contactOwnerId = String(update.contactOwnerId);
+    }
+
+    const result = await db.collection<ILead>(LeadCollection).updateOne(
+      { _id: new ObjectId(_id), workspaceId: orgId },
+      { $set: { ...update, updatedAt: new Date() } }
+    );
+
+    if (result.matchedCount === 0) {
+      return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ message: 'Lead updated' });
+  } catch (error) {
+    console.error('Error updating lead:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const { userId, orgId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (!orgId) {
+      return NextResponse.json({ error: 'No active workspace' }, { status: 400 });
+    }
+
+    const { ids } = await request.json();
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return NextResponse.json({ error: 'No ids provided' }, { status: 400 });
+    }
+
+    const objectIds = ids.map((id: string) => new ObjectId(id));
+    const { db } = await connectDB();
+
+    // Find impacted leads to decrement counts per list
+    const leadsToDelete = await db.collection<ILead>(LeadCollection)
+      .find({ _id: { $in: objectIds }, workspaceId: orgId })
+      .project({ listId: 1 })
+      .toArray();
+
+    const result = await db.collection<ILead>(LeadCollection).deleteMany({
+      _id: { $in: objectIds },
+      workspaceId: orgId,
+    });
+
+    // Decrement list counts
+    const listDecrements: Record<string, number> = {};
+    for (const lead of leadsToDelete) {
+      if (lead.listId) {
+        const key = String(lead.listId);
+        listDecrements[key] = (listDecrements[key] || 0) + 1;
+      }
+    }
+    for (const [listId, dec] of Object.entries(listDecrements)) {
+      await db.collection<IList>(ListCollection).updateOne(
+        { _id: new ObjectId(listId), workspaceId: orgId },
+        { $inc: { leadCount: -dec }, $set: { updatedAt: new Date() } }
+      );
+    }
+
+    return NextResponse.json({ deletedCount: result.deletedCount });
+  } catch (error) {
+    console.error('Error deleting leads:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }

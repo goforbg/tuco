@@ -1,6 +1,7 @@
 'use client';
 
 import { Bell, HelpCircle, FileText, ArrowUp, Menu } from 'lucide-react';
+import { useOrganization } from '@clerk/nextjs';
 
 interface TopBarProps {
   onMenuToggle: () => void;
@@ -8,6 +9,9 @@ interface TopBarProps {
 }
 
 export default function TopBar({ onMenuToggle, isMobile }: TopBarProps) {
+  const { organization } = useOrganization();
+  const workspaceSlug = organization?.slug || 'workspace';
+  const badgeInitial = workspaceSlug.charAt(0).toUpperCase();
   return (
     <div className="bg-white border-b border-gray-200 px-4 md:px-6 h-16 flex items-center">
       <div className="w-full flex items-center">
@@ -24,9 +28,9 @@ export default function TopBar({ onMenuToggle, isMobile }: TopBarProps) {
 
           <div className="flex items-center px-3 py-1 bg-gray-100 rounded-lg">
             <div className="w-6 h-6 bg-primary rounded-full flex items-center justify-center mr-2">
-              <span className="text-xs font-medium text-white">P</span>
+              <span className="text-xs font-medium text-white">{badgeInitial}</span>
             </div>
-            <span className="text-body-small font-body-small text-gray-900 hidden sm:inline">Personal Team</span>
+            <span className="text-body-small font-body-small text-gray-900 hidden sm:inline">{workspaceSlug}</span>
           </div>
         </div>
 
