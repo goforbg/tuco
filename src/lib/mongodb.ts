@@ -30,7 +30,7 @@ async function connectDB(): Promise<{ client: MongoClient; db: Db }> {
 
   if (!cached.promise) {
     const opts = {
-      maxPoolSize: 10,
+      maxPoolSize: 50,
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
     };
