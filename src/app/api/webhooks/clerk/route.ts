@@ -133,7 +133,6 @@ export async function POST(req: NextRequest) {
       // or archiving to S3 + KMS and keeping only parsed fields here.
       event: eventObj,
       processed: false,
-      attempts: 0,
       last_error: null,
     };
     if (svixId) {
@@ -164,7 +163,16 @@ export async function POST(req: NextRequest) {
     async function safeUpsert() {
       for (let i = 0; i < 2; i++) {
         try {
-          return await collection.updateOne({ _event_id: uniqueId }, update, { upsert: true });
+          // First, try to update existing document
+          const result = await collection.updateOne({ _event_id: uniqueId }, update);
+          
+          // If no document was updated, insert a new one with attempts: 1
+          if (result.matchedCount === 0) {
+            const insertDoc = { ...docBase, attempts: 1, last_received_at: new Date() };
+            await collection.insertOne(insertDoc);
+          }
+          
+          return result;
         } catch (e) {
           if (i === 1) throw e;
           await new Promise((r) => setTimeout(r, 100 * (i + 1)));
