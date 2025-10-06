@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 const BATCH_SIZE = 20;
 const CLAIM_CONCURRENCY = 4;
 //const HEARTBEAT_INTERVAL_MS = 15_000;
-const CUTOFF_SEC = 90; // increase if you need longer jobs
+const CUTOFF_SEC = 10; // reduce to 10 seconds for faster recovery
 
 let userIndexesEnsured = false as boolean;
 async function ensureUserIndexes() {
@@ -52,7 +52,18 @@ async function reclaimStale() {
       { processing: true, processing_started_at: { $lte: cutoff } },
     ],
   });
-  console.log('clerk-projector-reclaim', { staleCount, cutoff: cutoff.toISOString() });
+  
+  // Also check for any events stuck in processing (more aggressive)
+  const stuckCount = await inbox.countDocuments({
+    processed: false,
+    processing: true,
+  });
+  
+  console.log('clerk-projector-reclaim', { 
+    staleCount, 
+    stuckCount,
+    cutoff: cutoff.toISOString() 
+  });
   
   const result = await inbox.updateMany(
     {
@@ -64,7 +75,18 @@ async function reclaimStale() {
     },
     { $set: { processing: false }, $inc: { attempts: 1 } }
   );
-  console.log('clerk-projector-reclaimed', { modifiedCount: result.modifiedCount });
+  
+  // If we have stuck events but didn't reclaim any, force reclaim them
+  if (stuckCount > 0 && result.modifiedCount === 0) {
+    console.log('clerk-projector-force-reclaim', { stuckCount });
+    const forceResult = await inbox.updateMany(
+      { processed: false, processing: true },
+      { $set: { processing: false }, $inc: { attempts: 1 } }
+    );
+    console.log('clerk-projector-force-reclaimed', { modifiedCount: forceResult.modifiedCount });
+  } else {
+    console.log('clerk-projector-reclaimed', { modifiedCount: result.modifiedCount });
+  }
 }
 
 async function processUserDeleted(eventDoc: AnyRecord) {
@@ -115,17 +137,37 @@ function extractUserFieldsFromEvent(eventDoc: AnyRecord) {
   const imageUrl = (data?.image_url as string | undefined) || (data?.imageUrl as string | undefined);
   const phone = (data?.phone_number as string | undefined) || (data?.phoneNumber as string | undefined);
   const name = [firstName, lastName].filter(Boolean).join(' ').trim();
+  
+  console.log('clerk-projector-extract-user', {
+    hasEvent: !!event,
+    hasData: !!data,
+    clerkUserId,
+    email,
+    firstName,
+    lastName,
+    dataKeys: data ? Object.keys(data) : []
+  });
+  
   return { clerkUserId, email, firstName, lastName, imageUrl, phone, name };
 }
 
 async function processUserCreatedOrUpdated(eventDoc: AnyRecord) {
+  console.log('clerk-projector-processUserCreatedOrUpdated-start');
   const { db } = await connectDB();
+  console.log('clerk-projector-processUserCreatedOrUpdated-db-connected');
   const users = db.collection('users');
   await ensureUserIndexes();
+  console.log('clerk-projector-processUserCreatedOrUpdated-indexes-ensured');
 
   const occurredAt: Date | null = toDate(eventDoc._occurred_at);
+  console.log('clerk-projector-processUserCreatedOrUpdated-occurredAt', { occurredAt });
   const { clerkUserId, email, firstName, lastName, imageUrl, phone, name } = extractUserFieldsFromEvent(eventDoc);
-  if (!clerkUserId) return;
+  console.log('clerk-projector-processUserCreatedOrUpdated-extracted', { clerkUserId, email, firstName, lastName });
+  if (!clerkUserId) {
+    console.log('clerk-projector-processUserCreatedOrUpdated-no-clerkUserId-returning');
+    return;
+  }
+  console.log('clerk-projector-processUserCreatedOrUpdated-continuing');
 
   const setFields: AnyRecord = {
     clerkUserId,
@@ -138,21 +180,32 @@ async function processUserCreatedOrUpdated(eventDoc: AnyRecord) {
     deleted: false,
     piiScrubbed: false,
   };
+  console.log('clerk-projector-processUserCreatedOrUpdated-setFields', setFields);
 
   // Remove undefined keys before update
   Object.keys(setFields).forEach((k) => {
     if (typeof setFields[k] === 'undefined') delete setFields[k];
   });
+  console.log('clerk-projector-processUserCreatedOrUpdated-setFields-cleaned', setFields);
 
   const orClauses: AnyRecord[] = [{ last_event_occurred_at: { $exists: false } }];
   if (occurredAt) orClauses.push({ last_event_occurred_at: { $lte: occurredAt } });
   const filter: AnyRecord = { clerkUserId, $or: orClauses };
+  console.log('clerk-projector-processUserCreatedOrUpdated-filter', filter);
 
   const update: AnyRecord = {
     $set: { ...setFields, last_event_occurred_at: occurredAt || new Date(0) },
   };
+  console.log('clerk-projector-processUserCreatedOrUpdated-update', update);
 
-  await users.updateOne(filter, update, { upsert: true });
+  console.log('clerk-projector-processUserCreatedOrUpdated-calling-updateOne');
+  const result = await users.updateOne(filter, update, { upsert: true });
+  console.log('clerk-projector-processUserCreatedOrUpdated-updateOne-result', { 
+    matchedCount: result.matchedCount, 
+    modifiedCount: result.modifiedCount, 
+    upsertedCount: result.upsertedCount 
+  });
+  console.log('clerk-projector-processUserCreatedOrUpdated-complete');
 }
 
 // // Archival stub (S3+KMS) - replace with real implementation
@@ -195,12 +248,19 @@ async function claimNextBatch() {
 }
 
 async function markProcessed(_event_id: string) {
+  console.log('clerk-projector-markProcessed-start', { eventId: _event_id });
   const { db } = await connectDB();
   const inbox = db.collection('clerk_events');
-  await inbox.updateOne(
+  const result = await inbox.updateOne(
     { _event_id },
     { $set: { processed: true, processing: false, processed_at: new Date() } }
   );
+  console.log('clerk-projector-markProcessed-result', { 
+    eventId: _event_id, 
+    matchedCount: result.matchedCount, 
+    modifiedCount: result.modifiedCount 
+  });
+  console.log('clerk-projector-markProcessed-complete');
 }
 
 async function markFailed(_event_id: string, errMsg: string) {
@@ -295,13 +355,16 @@ export async function POST(req: NextRequest) {
       );
       
       if (type === 'user.deleted') {
+        console.log('clerk-projector-processing-user-deleted');
         const eventData = isObjectRecord(doc.event) ? (doc.event as AnyRecord).data : undefined;
         console.log('clerk-projector-user-deleted', { 
           eventId, 
           clerkUserId: isObjectRecord(eventData) ? (eventData as AnyRecord).id : undefined 
         });
         await processUserDeleted(doc as AnyRecord);
+        console.log('clerk-projector-user-deleted-complete');
       } else if (type === 'user.created' || type === 'user.updated') {
+        console.log('clerk-projector-processing-user-upsert');
         const eventData = isObjectRecord(doc.event) ? (doc.event as AnyRecord).data : undefined;
         console.log('clerk-projector-user-upsert', { 
           eventId, 
@@ -316,6 +379,7 @@ export async function POST(req: NextRequest) {
             : undefined
         });
         await processUserCreatedOrUpdated(doc as AnyRecord);
+        console.log('clerk-projector-user-upsert-complete');
       } else {
         console.log('clerk-projector-unsupported-type', { eventId, type });
       }
@@ -327,7 +391,9 @@ export async function POST(req: NextRequest) {
       );
       
       // Other event types can be handled here with similar guards
+      console.log('clerk-projector-calling-markProcessed', { eventId });
       await markProcessed(eventId);
+      console.log('clerk-projector-markProcessed-done', { eventId });
       // Optional archival call (disabled/no-op by default)
       // await archiveRawEvent(eventId, doc as AnyRecord);
       
