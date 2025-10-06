@@ -217,7 +217,7 @@ async function markFailed(_event_id: string, errMsg: string) {
 }
 
 export async function POST(req: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
+  const cronSecret = process.env.CLERK_WEBHOOK_SECRET;
   const header = req.headers.get('x-cron-secret');
   if (!cronSecret || header !== cronSecret) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

@@ -182,6 +182,27 @@ export async function POST(req: NextRequest) {
 
     await safeUpsert();
 
+    // Trigger projector immediately after storing the event
+    try {
+      const projectorUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://app.tuco.ai'}/api/webhooks/clerk/projector`;
+      const cronSecret = process.env.CLERK_WEBHOOK_SECRET;
+      
+      if (cronSecret) {
+        // Fire and forget - don't wait for response to avoid blocking webhook
+        fetch(projectorUrl, {
+          method: 'POST',
+          headers: {
+            'x-cron-secret': cronSecret,
+            'content-type': 'application/json',
+          },
+        }).catch((err) => {
+          console.warn('Failed to trigger projector:', err);
+        });
+      }
+    } catch (err) {
+      console.warn('Error triggering projector:', err);
+    }
+
     return NextResponse.json({ ok: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'unknown';
