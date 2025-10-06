@@ -1,21 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 
-// We keep raw payload for verification and store parsed event for querying
-
 export const dynamic = 'force-dynamic';
 
-// Ensure indexes once per process
+// Ensure collection indexes
 let indexesEnsured = false as boolean;
 async function ensureIndexes() {
   if (indexesEnsured) return;
   const { db } = await connectDB();
-  const collection = db.collection('clerk_events');
   try {
     await Promise.all([
-      collection.createIndex({ _event_id: 1 }, { unique: true, name: 'uniq_event_id' }),
-      collection.createIndex({ type: 1, _occurred_at: 1 }, { name: 'type_occurred_idx' }),
-      collection.createIndex({ _received_at: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 90, name: 'ttl_received_90d' }),
+      // Users collection
+      db.collection('users').createIndex({ clerkUserId: 1 }, { unique: true, name: 'uniq_clerk_user_id' }),
+      // Organizations collection
+      db.collection('organizations').createIndex({ clerkOrgId: 1 }, { unique: true, name: 'uniq_clerk_org_id' }),
+      // Permissions collection
+      db.collection('permissions').createIndex({ clerkPermissionId: 1 }, { unique: true, name: 'uniq_clerk_permission_id' }),
+      // Roles collection
+      db.collection('roles').createIndex({ clerkRoleId: 1 }, { unique: true, name: 'uniq_clerk_role_id' }),
+      // Organization memberships collection
+      db.collection('organization_memberships').createIndex({ clerkMembershipId: 1 }, { unique: true, name: 'uniq_clerk_membership_id' }),
+      db.collection('organization_memberships').createIndex({ clerkUserId: 1, clerkOrgId: 1 }, { name: 'user_org_idx' }),
     ]);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'unknown';
@@ -42,13 +47,149 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-const ALLOWED_EVENT_TYPES = new Set([
-  'user.created','user.updated','user.deleted',
-  'organization.created','organization.updated','organization.deleted',
-  'organizationMembership.created','organizationMembership.updated','organizationMembership.deleted',
-  'role.created','role.updated','role.deleted',
-  'permission.created','permission.updated','permission.deleted',
-]);
+// Type definitions for event data
+type UserEventData = {
+  id?: string;
+  email_addresses?: Array<{ email_address: string }>;
+  email_address?: string;
+  first_name?: string;
+  firstName?: string;
+  last_name?: string;
+  lastName?: string;
+  image_url?: string;
+  imageUrl?: string;
+  phone_number?: string;
+  phoneNumber?: string;
+};
+
+type OrganizationEventData = {
+  id?: string;
+  name?: string;
+  slug?: string;
+  image_url?: string;
+  max_allowed_memberships?: number;
+  admin_delete_enabled?: boolean;
+  members_count?: number;
+  pending_invitations_count?: number;
+};
+
+type PermissionEventData = {
+  id?: string;
+  name?: string;
+  key?: string;
+  description?: string;
+  type?: string;
+};
+
+type RoleEventData = {
+  id?: string;
+  name?: string;
+  key?: string;
+  description?: string;
+  permissions?: string[];
+};
+
+type OrganizationMembershipEventData = {
+  id?: string;
+  user_id?: string;
+  organization_id?: string;
+  role?: string;
+  public_metadata?: Record<string, unknown>;
+  private_metadata?: Record<string, unknown>;
+};
+
+// Helper functions to extract data from different event types
+function extractUserData(eventData: UserEventData) {
+  const clerkUserId = eventData?.id;
+  const email = eventData?.email_addresses?.[0]?.email_address || eventData?.email_address;
+  const firstName = eventData?.first_name || eventData?.firstName;
+  const lastName = eventData?.last_name || eventData?.lastName;
+  const imageUrl = eventData?.image_url || eventData?.imageUrl;
+  const phone = eventData?.phone_number || eventData?.phoneNumber;
+  const name = [firstName, lastName].filter(Boolean).join(' ').trim();
+  
+  return {
+    clerkUserId,
+    email,
+    firstName,
+    lastName,
+    imageUrl,
+    phone,
+    name
+  };
+}
+
+function extractOrganizationData(eventData: OrganizationEventData) {
+  const clerkOrgId = eventData?.id;
+  const name = eventData?.name;
+  const slug = eventData?.slug;
+  const imageUrl = eventData?.image_url;
+  const maxAllowedMemberships = eventData?.max_allowed_memberships;
+  const adminDeleteEnabled = eventData?.admin_delete_enabled;
+  const membersCount = eventData?.members_count;
+  const pendingInvitationsCount = eventData?.pending_invitations_count;
+  
+  return {
+    clerkOrgId,
+    name,
+    slug,
+    imageUrl,
+    maxAllowedMemberships,
+    adminDeleteEnabled,
+    membersCount,
+    pendingInvitationsCount
+  };
+}
+
+function extractPermissionData(eventData: PermissionEventData) {
+  const clerkPermissionId = eventData?.id;
+  const name = eventData?.name;
+  const key = eventData?.key;
+  const description = eventData?.description;
+  const type = eventData?.type;
+  
+  return {
+    clerkPermissionId,
+    name,
+    key,
+    description,
+    type
+  };
+}
+
+function extractRoleData(eventData: RoleEventData) {
+  const clerkRoleId = eventData?.id;
+  const name = eventData?.name;
+  const key = eventData?.key;
+  const description = eventData?.description;
+  const permissions = eventData?.permissions || [];
+  
+  return {
+    clerkRoleId,
+    name,
+    key,
+    description,
+    permissions
+  };
+}
+
+function extractOrganizationMembershipData(eventData: OrganizationMembershipEventData) {
+  const clerkMembershipId = eventData?.id;
+  const clerkUserId = eventData?.user_id;
+  const clerkOrgId = eventData?.organization_id;
+  const role = eventData?.role;
+  const publicMetadata = eventData?.public_metadata;
+  const privateMetadata = eventData?.private_metadata;
+  
+  return {
+    clerkMembershipId,
+    clerkUserId,
+    clerkOrgId,
+    role,
+    publicMetadata,
+    privateMetadata
+  };
+}
 
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
@@ -75,21 +216,20 @@ export async function POST(req: NextRequest) {
 
   console.log('clerk-webhook-headers-received', { svixId, svixTimestamp });
 
-  // IMPORTANT: use raw text exactly as received for signature verification.
-  // Do NOT parse the body earlier in middleware.
+  // Get raw payload for signature verification
   const payload = await req.text();
   console.log('clerk-webhook-payload-received', { 
     size: payload.length, 
     sizeKB: Math.round(payload.length / 1024) 
   });
   
-  // Basic payload size guard (200KB). Tune based on your needs.
+  // Basic payload size guard
   if (payload.length > 200 * 1024) {
     console.error('clerk-webhook-payload-too-large', { size: payload.length });
     return NextResponse.json({ error: 'Payload too large' }, { status: 413 });
   }
   
-  // Dynamic import to avoid type resolution issues if svix isn't installed locally yet
+  // Verify webhook signature
   const svixModule = (await import('svix')) as unknown as SvixModule;
   const wh = new svixModule.Webhook(secret);
 
@@ -110,20 +250,14 @@ export async function POST(req: NextRequest) {
     console.error('clerk-webhook-invalid-payload');
     return NextResponse.json({ error: 'Invalid event payload' }, { status: 400 });
   }
+
   const eventObj = eventUnknown as Record<string, unknown>;
   const eventType: string | undefined = typeof eventObj['type'] === 'string' ? (eventObj['type'] as string) : undefined;
-  const eventId: string | undefined = typeof eventObj['id'] === 'string' ? (eventObj['id'] as string) : undefined;
-  const dataObj = isObjectRecord(eventObj['data']) ? (eventObj['data'] as Record<string, unknown>) : undefined;
-  const updatedAt = dataObj && typeof dataObj['updated_at'] === 'string' ? (dataObj['updated_at'] as string) : undefined;
-  const createdAt = dataObj && typeof dataObj['created_at'] === 'string' ? (dataObj['created_at'] as string) : undefined;
-  const occuredTop = typeof eventObj['occurred_at'] === 'string' ? (eventObj['occurred_at'] as string) : undefined;
-  const occurredAt: string | undefined = updatedAt || createdAt || occuredTop;
+  const eventData = isObjectRecord(eventObj['data']) ? (eventObj['data'] as Record<string, unknown>) : undefined;
 
   console.log('clerk-webhook-event-parsed', { 
     eventType, 
-    eventId, 
-    hasData: !!dataObj,
-    occurredAt 
+    hasData: !!eventData
   });
 
   if (!eventType) {
@@ -132,138 +266,347 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Replay window: reject if svix-timestamp older/newer than 5 minutes (allow skew)
-    const nowMs = Date.now();
-    const fiveMinutesMs = 5 * 60 * 1000;
-    const svixTsSec = Number(svixTimestamp);
-    if (!Number.isFinite(svixTsSec)) {
-      console.error('clerk-webhook-invalid-timestamp', { svixTimestamp });
-      return NextResponse.json({ error: 'Invalid svix timestamp' }, { status: 400 });
-    }
-    const svixTsMs = svixTsSec * 1000; // header is seconds per Svix
-    const timeDiff = Math.abs(nowMs - svixTsMs);
-    if (timeDiff > fiveMinutesMs) {
-      console.error('clerk-webhook-stale', { 
-        timeDiffMs: timeDiff, 
-        svixTimestamp, 
-        serverTime: new Date(nowMs).toISOString() 
-      });
-      return NextResponse.json({ error: 'Stale webhook' }, { status: 400 });
-    }
-
-    console.log('clerk-webhook-timestamp-valid', { timeDiffMs: timeDiff });
-
     await ensureIndexes();
-
     const { db } = await connectDB();
-    const collection = db.collection('clerk_events');
 
-    // Idempotent upsert by Clerk event id when available; fallback to svix-id
-    const uniqueId = eventId || svixId;
-
-    const safeType = eventType && ALLOWED_EVENT_TYPES.has(eventType) ? eventType : 'other.unknown';
-
-    const docBase: Record<string, unknown> = {
-      _event_id: uniqueId,
-      type: safeType,
-      _received_at: new Date(),
-      // TODO: raw payload contains PII (emails, names). Consider encrypting
-      // or archiving to S3 + KMS and keeping only parsed fields here.
-      event: eventObj,
-      processed: false,
-      last_error: null,
-    };
-    if (svixId) {
-      docBase._svix = { id: svixId, timestamp: svixTimestamp, signature: svixSignature };
-    }
-    let occurredDate: Date | undefined = undefined;
-    if (occurredAt) {
-      const parsed = new Date(occurredAt);
-      if (!Number.isNaN(parsed.getTime())) {
-        occurredDate = parsed;
-      }
-    }
-    if (occurredDate) {
-      docBase._occurred_at = occurredDate;
+    if (!eventData) {
+      console.error('clerk-webhook-no-event-data');
+      return NextResponse.json({ error: 'No event data' }, { status: 400 });
     }
 
-    const update: Record<string, unknown> = {
-      $setOnInsert: docBase,
-      $set: { last_received_at: new Date() },
-      $inc: { attempts: 1 },
-    };
-    // Maintain monotonic _occurred_at to help with out-of-order detection later
-    if (docBase._occurred_at) {
-      (update as Record<string, unknown>)['$max'] = { _occurred_at: docBase._occurred_at };
-    }
-
-    // Simple retry to tolerate transient Mongo errors
-    async function safeUpsert() {
-      for (let i = 0; i < 2; i++) {
-        try {
-          // First, try to update existing document
-          const result = await collection.updateOne({ _event_id: uniqueId }, update);
-          
-          // If no document was updated, insert a new one with attempts: 1
-          if (result.matchedCount === 0) {
-            const insertDoc = { ...docBase, attempts: 1, last_received_at: new Date() };
-            await collection.insertOne(insertDoc);
-          }
-          
-          return result;
-        } catch (e) {
-          if (i === 1) throw e;
-          await new Promise((r) => setTimeout(r, 100 * (i + 1)));
-        }
-      }
-    }
-
-    await safeUpsert();
-    console.log('clerk-webhook-event-stored', { eventId: uniqueId, eventType: safeType });
-
-    // Trigger projector immediately after storing the event
-    try {
-      const projectorUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://app.tuco.ai'}/api/webhooks/clerk/projector`;
-      const cronSecret = process.env.CLERK_WEBHOOK_SECRET;
+    // Handle user events
+    if (eventType === 'user.created' || eventType === 'user.updated') {
+      console.log('clerk-webhook-processing-user-event', { eventType });
       
-      if (cronSecret) {
-        console.log('clerk-webhook-triggering-projector', { projectorUrl });
-        // Fire and forget - don't wait for response to avoid blocking webhook
-        fetch(projectorUrl, {
-          method: 'POST',
-          headers: {
-            'x-cron-secret': cronSecret,
-            'content-type': 'application/json',
-          },
-        })
-        .then(async (response) => {
-          const result = await response.json();
-          console.log('clerk-webhook-projector-response', { 
-            status: response.status, 
-            result,
-            eventId: uniqueId 
-          });
-        })
-        .catch((err) => {
-          console.error('clerk-webhook-projector-failed', { 
-            error: err instanceof Error ? err.message : 'unknown',
-            eventId: uniqueId 
-          });
-        });
-      } else {
-        console.warn('clerk-webhook-no-cron-secret', { eventId: uniqueId });
+      const { clerkUserId, email, firstName, lastName, imageUrl, phone, name } = extractUserData(eventData);
+      
+      if (!clerkUserId) {
+        console.error('clerk-webhook-no-user-id');
+        return NextResponse.json({ error: 'No user ID' }, { status: 400 });
       }
-    } catch (err) {
-      console.error('clerk-webhook-projector-trigger-error', { 
-        error: err instanceof Error ? err.message : 'unknown',
-        eventId: uniqueId 
+
+      const users = db.collection('users');
+      const userDoc = {
+        clerkUserId,
+        email,
+        firstName,
+        lastName,
+        name,
+        imageUrl,
+        phone,
+        deleted: false,
+        updatedAt: new Date()
+      };
+
+      // Remove undefined values
+      Object.keys(userDoc).forEach(key => {
+        if (userDoc[key as keyof typeof userDoc] === undefined) {
+          delete userDoc[key as keyof typeof userDoc];
+        }
       });
+
+      await users.updateOne(
+        { clerkUserId },
+        { 
+          $set: userDoc,
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      );
+
+      console.log('clerk-webhook-user-upserted', { clerkUserId, eventType });
+
+    } else if (eventType === 'user.deleted') {
+      console.log('clerk-webhook-processing-user-deleted');
+      
+      const clerkUserId = eventData.id;
+      
+      if (!clerkUserId) {
+        console.error('clerk-webhook-no-user-id');
+        return NextResponse.json({ error: 'No user ID' }, { status: 400 });
+      }
+
+      const users = db.collection('users');
+      await users.updateOne(
+        { clerkUserId },
+        { 
+          $set: { 
+            deleted: true,
+            deletedAt: new Date(),
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      console.log('clerk-webhook-user-deleted', { clerkUserId });
+
+    // Handle organization events
+    } else if (eventType === 'organization.created' || eventType === 'organization.updated') {
+      console.log('clerk-webhook-processing-organization-event', { eventType });
+      
+      const { clerkOrgId, name, slug, imageUrl, maxAllowedMemberships, adminDeleteEnabled, membersCount, pendingInvitationsCount } = extractOrganizationData(eventData);
+      
+      if (!clerkOrgId) {
+        console.error('clerk-webhook-no-org-id');
+        return NextResponse.json({ error: 'No organization ID' }, { status: 400 });
+      }
+
+      const organizations = db.collection('organizations');
+      const orgDoc = {
+        clerkOrgId,
+        name,
+        slug,
+        imageUrl,
+        maxAllowedMemberships,
+        adminDeleteEnabled,
+        membersCount,
+        pendingInvitationsCount,
+        deleted: false,
+        updatedAt: new Date()
+      };
+
+      // Remove undefined values
+      Object.keys(orgDoc).forEach(key => {
+        if (orgDoc[key as keyof typeof orgDoc] === undefined) {
+          delete orgDoc[key as keyof typeof orgDoc];
+        }
+      });
+
+      await organizations.updateOne(
+        { clerkOrgId },
+        { 
+          $set: orgDoc,
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      );
+
+      console.log('clerk-webhook-organization-upserted', { clerkOrgId, eventType });
+
+    } else if (eventType === 'organization.deleted') {
+      console.log('clerk-webhook-processing-organization-deleted');
+      
+      const clerkOrgId = eventData.id;
+      
+      if (!clerkOrgId) {
+        console.error('clerk-webhook-no-org-id');
+        return NextResponse.json({ error: 'No organization ID' }, { status: 400 });
+      }
+
+      const organizations = db.collection('organizations');
+      await organizations.updateOne(
+        { clerkOrgId },
+        { 
+          $set: { 
+            deleted: true,
+            deletedAt: new Date(),
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      console.log('clerk-webhook-organization-deleted', { clerkOrgId });
+
+    // Handle permission events
+    } else if (eventType === 'permission.created' || eventType === 'permission.updated') {
+      console.log('clerk-webhook-processing-permission-event', { eventType });
+      
+      const { clerkPermissionId, name, key, description, type } = extractPermissionData(eventData);
+      
+      if (!clerkPermissionId) {
+        console.error('clerk-webhook-no-permission-id');
+        return NextResponse.json({ error: 'No permission ID' }, { status: 400 });
+      }
+
+      const permissions = db.collection('permissions');
+      const permissionDoc = {
+        clerkPermissionId,
+        name,
+        key,
+        description,
+        type,
+        deleted: false,
+        updatedAt: new Date()
+      };
+
+      // Remove undefined values
+      Object.keys(permissionDoc).forEach(key => {
+        if (permissionDoc[key as keyof typeof permissionDoc] === undefined) {
+          delete permissionDoc[key as keyof typeof permissionDoc];
+        }
+      });
+
+      await permissions.updateOne(
+        { clerkPermissionId },
+        { 
+          $set: permissionDoc,
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      );
+
+      console.log('clerk-webhook-permission-upserted', { clerkPermissionId, eventType });
+
+    } else if (eventType === 'permission.deleted') {
+      console.log('clerk-webhook-processing-permission-deleted');
+      
+      const clerkPermissionId = eventData.id;
+      
+      if (!clerkPermissionId) {
+        console.error('clerk-webhook-no-permission-id');
+        return NextResponse.json({ error: 'No permission ID' }, { status: 400 });
+      }
+
+      const permissions = db.collection('permissions');
+      await permissions.updateOne(
+        { clerkPermissionId },
+        { 
+          $set: { 
+            deleted: true,
+            deletedAt: new Date(),
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      console.log('clerk-webhook-permission-deleted', { clerkPermissionId });
+
+    // Handle role events
+    } else if (eventType === 'role.created' || eventType === 'role.updated') {
+      console.log('clerk-webhook-processing-role-event', { eventType });
+      
+      const { clerkRoleId, name, key, description, permissions } = extractRoleData(eventData);
+      
+      if (!clerkRoleId) {
+        console.error('clerk-webhook-no-role-id');
+        return NextResponse.json({ error: 'No role ID' }, { status: 400 });
+      }
+
+      const roles = db.collection('roles');
+      const roleDoc = {
+        clerkRoleId,
+        name,
+        key,
+        description,
+        permissions,
+        deleted: false,
+        updatedAt: new Date()
+      };
+
+      // Remove undefined values
+      Object.keys(roleDoc).forEach(key => {
+        if (roleDoc[key as keyof typeof roleDoc] === undefined) {
+          delete roleDoc[key as keyof typeof roleDoc];
+        }
+      });
+
+      await roles.updateOne(
+        { clerkRoleId },
+        { 
+          $set: roleDoc,
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      );
+
+      console.log('clerk-webhook-role-upserted', { clerkRoleId, eventType });
+
+    } else if (eventType === 'role.deleted') {
+      console.log('clerk-webhook-processing-role-deleted');
+      
+      const clerkRoleId = eventData.id;
+      
+      if (!clerkRoleId) {
+        console.error('clerk-webhook-no-role-id');
+        return NextResponse.json({ error: 'No role ID' }, { status: 400 });
+      }
+
+      const roles = db.collection('roles');
+      await roles.updateOne(
+        { clerkRoleId },
+        { 
+          $set: { 
+            deleted: true,
+            deletedAt: new Date(),
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      console.log('clerk-webhook-role-deleted', { clerkRoleId });
+
+    // Handle organization membership events
+    } else if (eventType === 'organizationMembership.created' || eventType === 'organizationMembership.updated') {
+      console.log('clerk-webhook-processing-membership-event', { eventType });
+      
+      const { clerkMembershipId, clerkUserId, clerkOrgId, role, publicMetadata, privateMetadata } = extractOrganizationMembershipData(eventData);
+      
+      if (!clerkMembershipId || !clerkUserId || !clerkOrgId) {
+        console.error('clerk-webhook-incomplete-membership-data', { clerkMembershipId, clerkUserId, clerkOrgId });
+        return NextResponse.json({ error: 'Incomplete membership data' }, { status: 400 });
+      }
+
+      const memberships = db.collection('organization_memberships');
+      const membershipDoc = {
+        clerkMembershipId,
+        clerkUserId,
+        clerkOrgId,
+        role,
+        publicMetadata,
+        privateMetadata,
+        deleted: false,
+        updatedAt: new Date()
+      };
+
+      // Remove undefined values
+      Object.keys(membershipDoc).forEach(key => {
+        if (membershipDoc[key as keyof typeof membershipDoc] === undefined) {
+          delete membershipDoc[key as keyof typeof membershipDoc];
+        }
+      });
+
+      await memberships.updateOne(
+        { clerkMembershipId },
+        { 
+          $set: membershipDoc,
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      );
+
+      console.log('clerk-webhook-membership-upserted', { clerkMembershipId, eventType });
+
+    } else if (eventType === 'organizationMembership.deleted') {
+      console.log('clerk-webhook-processing-membership-deleted');
+      
+      const clerkMembershipId = eventData.id;
+      
+      if (!clerkMembershipId) {
+        console.error('clerk-webhook-no-membership-id');
+        return NextResponse.json({ error: 'No membership ID' }, { status: 400 });
+      }
+
+      const memberships = db.collection('organization_memberships');
+      await memberships.updateOne(
+        { clerkMembershipId },
+        { 
+          $set: { 
+            deleted: true,
+            deletedAt: new Date(),
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      console.log('clerk-webhook-membership-deleted', { clerkMembershipId });
+
+    } else {
+      console.log('clerk-webhook-unsupported-event-type', { eventType });
     }
 
     const duration = Date.now() - startTime;
     console.log('clerk-webhook-complete', { 
-      eventId: uniqueId, 
-      eventType: safeType, 
+      eventType, 
       durationMs: duration 
     });
     return NextResponse.json({ ok: true });
