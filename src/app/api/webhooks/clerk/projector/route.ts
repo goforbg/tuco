@@ -43,7 +43,18 @@ async function reclaimStale() {
   const { db } = await connectDB();
   const inbox = db.collection('clerk_events');
   const cutoff = new Date(Date.now() - CUTOFF_SEC * 1000);
-  await inbox.updateMany(
+  
+  // Debug: Check what we're about to reclaim
+  const staleCount = await inbox.countDocuments({
+    processed: false,
+    $or: [
+      { processing_last_heartbeat: { $exists: true, $lte: cutoff } },
+      { processing: true, processing_started_at: { $lte: cutoff } },
+    ],
+  });
+  console.log('clerk-projector-reclaim', { staleCount, cutoff: cutoff.toISOString() });
+  
+  const result = await inbox.updateMany(
     {
       processed: false,
       $or: [
@@ -53,6 +64,7 @@ async function reclaimStale() {
     },
     { $set: { processing: false }, $inc: { attempts: 1 } }
   );
+  console.log('clerk-projector-reclaimed', { modifiedCount: result.modifiedCount });
 }
 
 async function processUserDeleted(eventDoc: AnyRecord) {
@@ -217,55 +229,146 @@ async function markFailed(_event_id: string, errMsg: string) {
 }
 
 export async function POST(req: NextRequest) {
+  const startTime = Date.now();
+  console.log('clerk-projector-start', { timestamp: new Date().toISOString() });
+  
   const cronSecret = process.env.CLERK_WEBHOOK_SECRET;
   const header = req.headers.get('x-cron-secret');
   if (!cronSecret || header !== cronSecret) {
+    console.error('clerk-projector-auth-failed', { hasSecret: !!cronSecret, hasHeader: !!header });
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  console.log('clerk-projector-auth-success');
   await reclaimStale();
 
   const claimed = await claimNextBatch();
-  console.log('clerk-projector-claimed', { count: claimed.length });
+  console.log('clerk-projector-claimed', { 
+    count: claimed.length,
+    eventIds: claimed.map(c => c._event_id),
+    types: claimed.map(c => c.type)
+  });
+  
+  // Debug: Check how many unprocessed events exist
+  const { db } = await connectDB();
+  const inbox = db.collection('clerk_events');
+  const unprocessedCount = await inbox.countDocuments({ processed: false });
+  const processingCount = await inbox.countDocuments({ processed: false, processing: true });
+  const failedCount = await inbox.countDocuments({ processed: false, last_error: { $exists: true } });
+  
+  console.log('clerk-projector-stats', { 
+    unprocessedCount, 
+    processingCount,
+    failedCount,
+    claimedCount: claimed.length 
+  });
+  
   if (claimed.length === 0) {
-    return NextResponse.json({ ok: true, processed: 0 });
+    const duration = Date.now() - startTime;
+    console.log('clerk-projector-complete', { 
+      processed: 0, 
+      unprocessedCount,
+      durationMs: duration 
+    });
+    return NextResponse.json({ ok: true, processed: 0, unprocessedCount });
   }
 
   let success = 0;
-  // Hoist DB handle for inbox to reuse within the loop
-  const { db } = await connectDB();
-  const inbox = db.collection('clerk_events');
+  let failed = 0;
+  
   for (const doc of claimed) {
+    const eventId = String(doc._event_id);
+    const type = String(doc.type);
+    const eventStartTime = Date.now();
+    
+    console.log('clerk-projector-processing', { 
+      eventId, 
+      type, 
+      attempts: doc.attempts || 1 
+    });
+    
     try {
-      const type: string = String(doc.type);
       // heartbeat before heavy work
       await inbox.updateOne(
-        { _event_id: String(doc._event_id) },
+        { _event_id: eventId },
         { $set: { processing_last_heartbeat: new Date() } }
       );
+      
       if (type === 'user.deleted') {
+        const eventData = isObjectRecord(doc.event) ? (doc.event as AnyRecord).data : undefined;
+        console.log('clerk-projector-user-deleted', { 
+          eventId, 
+          clerkUserId: isObjectRecord(eventData) ? (eventData as AnyRecord).id : undefined 
+        });
         await processUserDeleted(doc as AnyRecord);
       } else if (type === 'user.created' || type === 'user.updated') {
+        const eventData = isObjectRecord(doc.event) ? (doc.event as AnyRecord).data : undefined;
+        console.log('clerk-projector-user-upsert', { 
+          eventId, 
+          clerkUserId: isObjectRecord(eventData) ? (eventData as AnyRecord).id : undefined,
+          email: isObjectRecord(eventData) && Array.isArray((eventData as AnyRecord).email_addresses) 
+            ? ((eventData as AnyRecord).email_addresses as unknown[])[0] && isObjectRecord(((eventData as AnyRecord).email_addresses as unknown[])[0])
+              ? (((eventData as AnyRecord).email_addresses as unknown[])[0] as AnyRecord).email_address
+              : undefined
+            : undefined,
+          name: isObjectRecord(eventData) 
+            ? `${(eventData as AnyRecord).first_name || ''} ${(eventData as AnyRecord).last_name || ''}`.trim()
+            : undefined
+        });
         await processUserCreatedOrUpdated(doc as AnyRecord);
+      } else {
+        console.log('clerk-projector-unsupported-type', { eventId, type });
       }
+      
       // heartbeat after processing, before finalize
       await inbox.updateOne(
-        { _event_id: String(doc._event_id) },
+        { _event_id: eventId },
         { $set: { processing_last_heartbeat: new Date() } }
       );
+      
       // Other event types can be handled here with similar guards
-      await markProcessed(String(doc._event_id));
+      await markProcessed(eventId);
       // Optional archival call (disabled/no-op by default)
-      // await archiveRawEvent(String(doc._event_id), doc as AnyRecord);
+      // await archiveRawEvent(eventId, doc as AnyRecord);
+      
+      const eventDuration = Date.now() - eventStartTime;
+      console.log('clerk-projector-event-success', { 
+        eventId, 
+        type, 
+        durationMs: eventDuration 
+      });
       success += 1;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'unknown';
-      console.error('clerk-projector', { err: message, eventId: doc._event_id, type: doc.type });
-      await markFailed(doc._event_id as string, message);
+      const eventDuration = Date.now() - eventStartTime;
+      console.error('clerk-projector-event-failed', { 
+        eventId, 
+        type, 
+        error: message, 
+        durationMs: eventDuration,
+        attempts: doc.attempts || 1
+      });
+      await markFailed(eventId, message);
+      failed += 1;
     }
   }
-  console.log('clerk-projector-processed', { processed: success, claimed: claimed.length });
-  return NextResponse.json({ ok: true, processed: success, claimed: claimed.length });
+  
+  const totalDuration = Date.now() - startTime;
+  console.log('clerk-projector-complete', { 
+    processed: success, 
+    failed,
+    claimed: claimed.length,
+    durationMs: totalDuration,
+    avgEventMs: claimed.length > 0 ? Math.round(totalDuration / claimed.length) : 0
+  });
+  
+  return NextResponse.json({ 
+    ok: true, 
+    processed: success, 
+    failed,
+    claimed: claimed.length,
+    durationMs: totalDuration
+  });
 }
 
 

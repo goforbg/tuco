@@ -51,8 +51,12 @@ const ALLOWED_EVENT_TYPES = new Set([
 ]);
 
 export async function POST(req: NextRequest) {
+  const startTime = Date.now();
+  console.log('clerk-webhook-start', { timestamp: new Date().toISOString() });
+  
   const secret = process.env.CLERK_WEBHOOK_SECRET;
   if (!secret) {
+    console.error('clerk-webhook-missing-secret');
     return NextResponse.json({ error: 'Missing CLERK_WEBHOOK_SECRET' }, { status: 500 });
   }
 
@@ -61,16 +65,30 @@ export async function POST(req: NextRequest) {
   const svixSignature = req.headers.get('svix-signature');
 
   if (!svixId || !svixTimestamp || !svixSignature) {
+    console.error('clerk-webhook-missing-headers', { 
+      hasId: !!svixId, 
+      hasTimestamp: !!svixTimestamp, 
+      hasSignature: !!svixSignature 
+    });
     return NextResponse.json({ error: 'Missing Svix signature headers' }, { status: 400 });
   }
+
+  console.log('clerk-webhook-headers-received', { svixId, svixTimestamp });
 
   // IMPORTANT: use raw text exactly as received for signature verification.
   // Do NOT parse the body earlier in middleware.
   const payload = await req.text();
+  console.log('clerk-webhook-payload-received', { 
+    size: payload.length, 
+    sizeKB: Math.round(payload.length / 1024) 
+  });
+  
   // Basic payload size guard (200KB). Tune based on your needs.
   if (payload.length > 200 * 1024) {
+    console.error('clerk-webhook-payload-too-large', { size: payload.length });
     return NextResponse.json({ error: 'Payload too large' }, { status: 413 });
   }
+  
   // Dynamic import to avoid type resolution issues if svix isn't installed locally yet
   const svixModule = (await import('svix')) as unknown as SvixModule;
   const wh = new svixModule.Webhook(secret);
@@ -82,11 +100,14 @@ export async function POST(req: NextRequest) {
       'svix-timestamp': svixTimestamp,
       'svix-signature': svixSignature,
     } as SvixHeaders);
-  } catch {
+    console.log('clerk-webhook-signature-verified');
+  } catch (err) {
+    console.error('clerk-webhook-signature-invalid', { error: err instanceof Error ? err.message : 'unknown' });
     return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
   }
 
   if (!isObjectRecord(eventUnknown)) {
+    console.error('clerk-webhook-invalid-payload');
     return NextResponse.json({ error: 'Invalid event payload' }, { status: 400 });
   }
   const eventObj = eventUnknown as Record<string, unknown>;
@@ -98,7 +119,15 @@ export async function POST(req: NextRequest) {
   const occuredTop = typeof eventObj['occurred_at'] === 'string' ? (eventObj['occurred_at'] as string) : undefined;
   const occurredAt: string | undefined = updatedAt || createdAt || occuredTop;
 
+  console.log('clerk-webhook-event-parsed', { 
+    eventType, 
+    eventId, 
+    hasData: !!dataObj,
+    occurredAt 
+  });
+
   if (!eventType) {
+    console.error('clerk-webhook-missing-event-type');
     return NextResponse.json({ error: 'Missing event type' }, { status: 400 });
   }
 
@@ -108,12 +137,21 @@ export async function POST(req: NextRequest) {
     const fiveMinutesMs = 5 * 60 * 1000;
     const svixTsSec = Number(svixTimestamp);
     if (!Number.isFinite(svixTsSec)) {
+      console.error('clerk-webhook-invalid-timestamp', { svixTimestamp });
       return NextResponse.json({ error: 'Invalid svix timestamp' }, { status: 400 });
     }
     const svixTsMs = svixTsSec * 1000; // header is seconds per Svix
-    if (Math.abs(nowMs - svixTsMs) > fiveMinutesMs) {
+    const timeDiff = Math.abs(nowMs - svixTsMs);
+    if (timeDiff > fiveMinutesMs) {
+      console.error('clerk-webhook-stale', { 
+        timeDiffMs: timeDiff, 
+        svixTimestamp, 
+        serverTime: new Date(nowMs).toISOString() 
+      });
       return NextResponse.json({ error: 'Stale webhook' }, { status: 400 });
     }
+
+    console.log('clerk-webhook-timestamp-valid', { timeDiffMs: timeDiff });
 
     await ensureIndexes();
 
@@ -181,6 +219,7 @@ export async function POST(req: NextRequest) {
     }
 
     await safeUpsert();
+    console.log('clerk-webhook-event-stored', { eventId: uniqueId, eventType: safeType });
 
     // Trigger projector immediately after storing the event
     try {
@@ -188,6 +227,7 @@ export async function POST(req: NextRequest) {
       const cronSecret = process.env.CLERK_WEBHOOK_SECRET;
       
       if (cronSecret) {
+        console.log('clerk-webhook-triggering-projector', { projectorUrl });
         // Fire and forget - don't wait for response to avoid blocking webhook
         fetch(projectorUrl, {
           method: 'POST',
@@ -195,14 +235,37 @@ export async function POST(req: NextRequest) {
             'x-cron-secret': cronSecret,
             'content-type': 'application/json',
           },
-        }).catch((err) => {
-          console.warn('Failed to trigger projector:', err);
+        })
+        .then(async (response) => {
+          const result = await response.json();
+          console.log('clerk-webhook-projector-response', { 
+            status: response.status, 
+            result,
+            eventId: uniqueId 
+          });
+        })
+        .catch((err) => {
+          console.error('clerk-webhook-projector-failed', { 
+            error: err instanceof Error ? err.message : 'unknown',
+            eventId: uniqueId 
+          });
         });
+      } else {
+        console.warn('clerk-webhook-no-cron-secret', { eventId: uniqueId });
       }
     } catch (err) {
-      console.warn('Error triggering projector:', err);
+      console.error('clerk-webhook-projector-trigger-error', { 
+        error: err instanceof Error ? err.message : 'unknown',
+        eventId: uniqueId 
+      });
     }
 
+    const duration = Date.now() - startTime;
+    console.log('clerk-webhook-complete', { 
+      eventId: uniqueId, 
+      eventType: safeType, 
+      durationMs: duration 
+    });
     return NextResponse.json({ ok: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'unknown';
