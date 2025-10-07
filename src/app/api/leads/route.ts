@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
       const leadIds = Object.values(result.insertedIds).map(id => id.toString());
       
       // Start bulk availability checking in background with proper auth
-      fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/leads/check-availability`, {
+      fetch(`${process.env.NEXT_PUBLIC_APP_URL|| 'https://app.tuco.ai'}/api/leads/check-availability`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
