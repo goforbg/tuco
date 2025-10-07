@@ -6,7 +6,6 @@ export interface ILine {
   // Tenant / Ownership
   workspaceId: string; // Clerk Organization (org) ID
   createdByUserId: string; // Clerk user ID who created/purchased the line
-  createdUserId?: string; // Optional Clerk user ID assigned to this line
 
   // Critical server-only properties (NEVER expose to frontend)
   serverUrl: string; // Internal server URL for this line
@@ -27,12 +26,6 @@ export interface ILine {
   dailyNewConversationsLimit: number; // default 20
   dailyTotalMessagesLimit: number; // default 150
 
-  // Usage counters (reset daily via job - not implemented here)
-  usage?: {
-    date: string; // DD-MMM-YYYY of counters
-    newConversationsCount: number;
-    totalMessagesCount: number;
-  };
 
   // Metadata
   createdAt: Date;

@@ -3,6 +3,7 @@ import { auth } from '@clerk/nextjs/server';
 import connectDB from '@/lib/mongodb';
 import { ILine, LineCollection } from '@/models/Line';
 import { ObjectId } from 'mongodb';
+import { sendTelegramNotification } from '@/lib/telegram';
 
 // GET /api/lines - list lines for current org
 export async function GET() {
@@ -48,7 +49,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { phone, email, firstName, lastName, profileImageUrl, createdUserId, lineType } = body as Partial<ILine>;
+    const { phone, email, firstName, lastName, profileImageUrl, lineType } = body as Partial<ILine>;
 
     if (!firstName || !lastName) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -65,7 +66,6 @@ export async function POST(request: NextRequest) {
     const newLine: ILine = {
       workspaceId: orgId,
       createdByUserId: userId,
-      createdUserId,
       serverUrl: `https://line-${Date.now()}.internal.tuco.ai`, // Internal server URL
       phone: phone || 'PENDING',
       email: email || `pending+${Date.now()}@assigned.local`,
@@ -79,11 +79,6 @@ export async function POST(request: NextRequest) {
       lineType: lineType || 'purchased', // default to purchased if not specified
       dailyNewConversationsLimit: 20,
       dailyTotalMessagesLimit: 150,
-      usage: {
-        date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-').toUpperCase(),
-        newConversationsCount: 0,
-        totalMessagesCount: 0,
-      },
       createdAt: now,
       updatedAt: now,
     };
@@ -120,6 +115,22 @@ export async function POST(request: NextRequest) {
       }
     );
 
+    // Send Telegram notification
+    const notificationMessage = `🚀 <b>New Line Created!</b>
+
+<b>Name:</b> ${firstName} ${lastName}
+<b>Type:</b> ${lineType || 'purchased'}
+<b>Workspace:</b> ${orgId}
+<b>Created by:</b> ${userId}
+<b>ETA:</b> ${etaDateString}
+
+<b>Line ID:</b> <code>${result.insertedId}</code>`;
+
+    // Send notification asynchronously (don't wait for it)
+    sendTelegramNotification(notificationMessage).catch(error => {
+      console.error('Failed to send Telegram notification:', error);
+    });
+
     return NextResponse.json({ _id: result.insertedId, ...newLine }, { status: 201 });
   } catch (error) {
     console.error('Error creating line:', error);
@@ -139,7 +150,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { _id, firstName, lastName, profileImageUrl, isActive, createdUserId, provisioningStatus } = body as Partial<ILine> & { _id?: string };
+    const { _id, firstName, lastName, profileImageUrl, isActive, provisioningStatus } = body as Partial<ILine> & { _id?: string };
     if (!_id) {
       return NextResponse.json({ error: 'Missing _id' }, { status: 400 });
     }
@@ -151,7 +162,6 @@ export async function PUT(request: NextRequest) {
     if (typeof lastName === 'string') update.lastName = lastName;
     if (typeof profileImageUrl === 'string' || profileImageUrl === null) update.profileImageUrl = profileImageUrl || undefined;
     if (typeof isActive === 'boolean') update.isActive = isActive;
-    if (typeof createdUserId === 'string' || createdUserId === null) update.createdUserId = createdUserId || undefined;
     if (provisioningStatus === 'active' || provisioningStatus === 'failed' || provisioningStatus === 'provisioning') {
       update.provisioningStatus = provisioningStatus;
       if (provisioningStatus === 'active') {
