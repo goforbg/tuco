@@ -24,7 +24,10 @@ export async function GET() {
       .toArray();
 
     // Strip critical server-only properties before sending to frontend
-    const safeLines = lines.map(({ serverUrl: _serverUrl, ...line }) => line);
+    const safeLines = lines.map(({ serverUrl, ...line }) => {
+      // serverUrl is intentionally excluded for security
+      return line;
+    });
 
     return NextResponse.json({ lines: safeLines });
   } catch (error) {
@@ -176,7 +179,8 @@ export async function PUT(request: NextRequest) {
     }
 
     // Strip critical server-only properties before sending to frontend
-    const { serverUrl: _serverUrl, ...safeLine } = updatedLine;
+    const { serverUrl, ...safeLine } = updatedLine;
+    // serverUrl is intentionally excluded for security
 
     return NextResponse.json({ line: safeLine });
   } catch (error) {

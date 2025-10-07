@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Smartphone, CheckCircle2, Pencil, Loader2, X, Upload } from 'lucide-react';
 import Link from 'next/link';
 import { useOrganization } from '@clerk/nextjs';
