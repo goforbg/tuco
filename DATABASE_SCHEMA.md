@@ -4,6 +4,70 @@
 This document outlines the database schema for the leads management system, including support for custom fields, external integrations, and lead organization.
 
 ## Collections
+### 0. Organizations (existing, updated counters for lines)
+
+Adds counters to track line entitlements and usage. These live in the existing `organizations` collection and are updated when lines are purchased/deleted.
+
+```typescript
+// organizations (partial)
+{
+  clerkOrgId: string,
+  // ...existing fields...
+  freeLinesIncluded: number,      // how many lines are included by the current plan
+  freeLinesUsed: number,          // how many free lines are currently used
+  totalLinesPurchased: number,    // additional paid lines purchased
+  totalLinesCount: number,        // total = freeLinesUsed + totalLinesPurchased
+}
+```
+
+Notes:
+- Values above will later be reconciled with Stripe entitlements (todo).
+
+### 1. Lines Collection (`lines`)
+
+```typescript
+interface ILine {
+  _id?: ObjectId;
+
+  // Tenant / Ownership
+  workspaceId: string; // Clerk Organization (org) ID
+  createdByUserId: string; // Clerk user ID who created/purchased the line
+  createdUserId?: string; // Optional Clerk user ID assigned to this line
+
+  // Line Profile
+  phone: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  profileImageUrl?: string;
+
+  // Provisioning & Billing
+  isActive: boolean; // true only when provisioningStatus === 'active'
+  provisioningStatus: 'provisioning' | 'active' | 'failed';
+  provisioningSubmittedAt?: Date;
+  estimatedReadyAt?: Date; // 24–48 hours typical
+  billingType?: 'free' | 'paid';
+
+  // Limits & Usage
+  dailyNewConversationsLimit: number; // default 20
+  dailyTotalMessagesLimit: number;    // default 150
+  usage?: {
+    date: string; // YYYY-MM-DD
+    newConversationsCount: number;
+    totalMessagesCount: number;
+  };
+
+  // Metadata
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+Indexes to consider:
+```javascript
+{ workspaceId: 1, createdAt: -1 }
+{ provisioningStatus: 1, workspaceId: 1 }
+```
 
 ### 1. Leads Collection (`leads`)
 
