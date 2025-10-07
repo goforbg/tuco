@@ -175,8 +175,11 @@ function extractRoleData(eventData: RoleEventData) {
 
 function extractOrganizationMembershipData(eventData: OrganizationMembershipEventData) {
   const clerkMembershipId = eventData?.id;
-  const clerkUserId = eventData?.user_id;
-  const clerkOrgId = eventData?.organization_id;
+  // Clerk may provide these under alternate paths depending on event payload version
+  const clerkUserId = (eventData as unknown as Record<string, unknown>)?.user_id as string | undefined
+    || (eventData as unknown as { public_user_data?: { user_id?: string } })?.public_user_data?.user_id;
+  const clerkOrgId = (eventData as unknown as Record<string, unknown>)?.organization_id as string | undefined
+    || (eventData as unknown as { organization?: { id?: string } })?.organization?.id;
   const role = eventData?.role;
   const publicMetadata = eventData?.public_metadata;
   const privateMetadata = eventData?.private_metadata;
