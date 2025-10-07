@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Upload, Download, MapPin, Users, FileText, AlertCircle, Plus, Search, X, Save, Trash2, ChevronLeft, ChevronRight, Info, Zap } from 'lucide-react';
+import { Upload, Download, MapPin, Users, FileText, AlertCircle, Plus, Search, X, Save, Trash2, ChevronLeft, ChevronRight, Info, Zap, LoaderCircle } from 'lucide-react';
 import { useOrganization } from '@clerk/nextjs';
 import { toast } from 'sonner';
 // import Papa from 'papaparse';
@@ -12,10 +12,17 @@ interface LeadData {
   firstName: string;
   lastName: string;
   phone: string;
+  email: string;
+  // Alternate Contact Information
+  altPhone1?: string;
+  altPhone2?: string;
+  altPhone3?: string;
+  altEmail1?: string;
+  altEmail2?: string;
+  altEmail3?: string;
   companyName?: string;
   jobTitle?: string;
   linkedinUrl?: string;
-  email: string;
   notes?: string;
   customFields?: { [key: string]: string | number | boolean };
   integrationIds?: {
@@ -236,8 +243,11 @@ export default function LeadsPage() {
   // Function to get or create "quick-sends" list
   const getOrCreateQuickSendsList = async () => {
     try {
-      // First try to find existing "quick-sends" list
-      const existingList = lists.find(list => list.name.toLowerCase() === 'quick-sends');
+      // First try to find existing "quick-sends" list (case insensitive)
+      const existingList = lists.find(list => 
+        list.name.toLowerCase() === 'quick-sends' || 
+        list.name.toLowerCase() === 'quick sends'
+      );
       if (existingList) {
         return existingList._id;
       }
@@ -253,10 +263,38 @@ export default function LeadsPage() {
         const data = await response.json();
         setLists(prev => [data.list, ...prev]);
         return data.list._id;
+      } else {
+        // If creation failed, try to find the list again (might have been created by another request)
+        const errorData = await response.json();
+        console.warn('Failed to create Quick Sends list:', errorData);
+        
+        // Reload lists to check if it was created by another process
+        const listsResponse = await fetch('/api/lists');
+        if (listsResponse.ok) {
+          const listsData = await listsResponse.json();
+          setLists(listsData.lists || []);
+          
+          const quickSendsList = listsData.lists.find((list: ListData) => 
+            list.name.toLowerCase() === 'quick-sends' || 
+            list.name.toLowerCase() === 'quick sends'
+          );
+          
+          if (quickSendsList) {
+            return quickSendsList._id;
+          }
+        }
+        
+        // If still not found, show error
+        toast.error('Failed to create Quick Sends list', {
+          description: errorData.error || 'Please try again or create a list manually.'
+        });
+        return null;
       }
-      return null;
     } catch (error) {
       console.error('Error creating quick-sends list:', error);
+      toast.error('Failed to create Quick Sends list', {
+        description: 'Network error. Please try again.'
+      });
       return null;
     }
   };
@@ -276,25 +314,40 @@ export default function LeadsPage() {
   const checkQuickSendAvailability = async () => {
     if (selectedLeadForMessage?._id !== 'quick-send') return;
     
-    const { phone, email } = selectedLeadForMessage;
+    // Get all contact methods in priority order
+    const contactMethods = [
+      selectedLeadForMessage.phone,
+      selectedLeadForMessage.altPhone1,
+      selectedLeadForMessage.altPhone2,
+      selectedLeadForMessage.altPhone3,
+      selectedLeadForMessage.email,
+      selectedLeadForMessage.altEmail1,
+      selectedLeadForMessage.altEmail2,
+      selectedLeadForMessage.altEmail3,
+    ].filter(Boolean); // Remove empty values
     
     // Validate that we have at least one valid contact method
-    if (!phone && !email) {
+    if (contactMethods.length === 0) {
       toast.error('Please enter either a phone number or email address');
       return;
     }
 
-    if (phone && !isValidPhone(phone)) {
+    // Validate the primary contact method (phone if available, otherwise email)
+    const primaryPhone = selectedLeadForMessage.phone;
+    const primaryEmail = selectedLeadForMessage.email;
+    
+    if (primaryPhone && !isValidPhone(primaryPhone)) {
       toast.error('Please enter a valid phone number (e.g., +1234567890)');
       return;
     }
 
-    if (email && !isValidEmail(email)) {
+    if (primaryEmail && !isValidEmail(primaryEmail)) {
       toast.error('Please enter a valid email address');
       return;
     }
 
-    const address = phone || email;
+    // Use the first available contact method (highest priority)
+    const address = contactMethods[0];
     if (!address) return;
 
     try {
@@ -319,13 +372,30 @@ export default function LeadsPage() {
           toast.info('iMessage not available, will send as SMS/Email');
         }
       } else {
+        const errorData = await response.json();
         setSelectedLeadForMessage(prev => prev ? { ...prev, availabilityStatus: 'error' } : null);
-        toast.error('Failed to check availability');
+        
+        // Handle specific error cases
+        if (errorData.error === 'NO_ACTIVE_LINE') {
+          toast.error('No Active Line Found', {
+            description: 'You need to create and activate a line in the Lines page before checking availability.',
+            action: {
+              label: 'Go to Lines',
+              onClick: () => window.open('/lines', '_blank')
+            }
+          });
+        } else {
+          toast.error('Failed to check availability', {
+            description: errorData.message || errorData.error || 'Please try again.'
+          });
+        }
       }
     } catch (error) {
       console.error('Error checking availability:', error);
       setSelectedLeadForMessage(prev => prev ? { ...prev, availabilityStatus: 'error' } : null);
-      toast.error('Error checking availability');
+      toast.error('Error checking availability', {
+        description: 'Network error or server unavailable. Please try again.'
+      });
     }
   };
 
@@ -365,13 +435,32 @@ export default function LeadsPage() {
           return;
         }
 
-        // Determine message type and recipient
-        if (selectedLeadForMessage.email) {
-          messageType = 'email';
-          recipientEmail = selectedLeadForMessage.email;
-        } else if (selectedLeadForMessage.phone) {
+        // Determine message type and recipient - prioritize phone numbers over email
+        // Priority: phone → altPhone1, altPhone2, altPhone3 → email → altEmail1, altEmail2, altEmail3
+        if (selectedLeadForMessage.phone) {
           messageType = 'imessage';
           recipientPhone = selectedLeadForMessage.phone;
+        } else if (selectedLeadForMessage.altPhone1) {
+          messageType = 'imessage';
+          recipientPhone = selectedLeadForMessage.altPhone1;
+        } else if (selectedLeadForMessage.altPhone2) {
+          messageType = 'imessage';
+          recipientPhone = selectedLeadForMessage.altPhone2;
+        } else if (selectedLeadForMessage.altPhone3) {
+          messageType = 'imessage';
+          recipientPhone = selectedLeadForMessage.altPhone3;
+        } else if (selectedLeadForMessage.email) {
+          messageType = 'email';
+          recipientEmail = selectedLeadForMessage.email;
+        } else if (selectedLeadForMessage.altEmail1) {
+          messageType = 'email';
+          recipientEmail = selectedLeadForMessage.altEmail1;
+        } else if (selectedLeadForMessage.altEmail2) {
+          messageType = 'email';
+          recipientEmail = selectedLeadForMessage.altEmail2;
+        } else if (selectedLeadForMessage.altEmail3) {
+          messageType = 'email';
+          recipientEmail = selectedLeadForMessage.altEmail3;
         }
         
         recipientName = `${selectedLeadForMessage.firstName} ${selectedLeadForMessage.lastName}`.trim() || 
@@ -707,6 +796,81 @@ export default function LeadsPage() {
     }
   };
 
+  const recheckSingleAvailability = async (leadId?: string) => {
+    if (!leadId) return;
+    try {
+      toast.info("Checking availability....")
+      const response = await fetch(`/api/leads/check-availability?id=${leadId}`);
+      if (response.ok) {
+        await response.json(); // Response is not used, just need to consume it
+        toast.success('Availability checked successfully');
+        // Reload leads to get updated status
+        await loadLeadsAndLists();
+        // Update sidebar lead if it's the same one
+        if (sidebarLead && sidebarLead._id === leadId) {
+          const updatedLead = leads.find(l => l._id === leadId);
+          if (updatedLead) {
+            setSidebarLead(updatedLead);
+          }
+        }
+      } else {
+        const errorData = await response.json();
+        toast.error('Failed to check availability', {
+          description: errorData.error || 'Please try again.'
+        });
+      }
+    } catch (error) {
+      console.error('Error checking availability:', error);
+      toast.error('Error checking availability');
+    }
+  };
+
+  const recheckBulkAvailability = async () => {
+    toast.info('Checking availability for selected leads...');
+
+    if (selectedIds.length === 0) {
+      toast.error('Please select leads to check availability');
+      return;
+    }
+    
+    try {
+      const response = await fetch('/api/leads/check-availability', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadIds: selectedIds }),
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        toast.success(`Availability checked for ${data.checked} leads`);
+        // Reload leads to get updated status
+        await loadLeadsAndLists();
+        // Clear selection
+        setSelectedIds([]);
+      } else {
+        const errorData = await response.json();
+        
+        // Handle specific error cases with clear messages
+        if (errorData.error === 'NO_ACTIVE_LINE') {
+          toast.error('No Active Line Found', {
+            description: 'You need to create and activate a line in the Lines page before checking availability.',
+            action: {
+              label: 'Go to Lines',
+              onClick: () => window.open('/lines', '_blank')
+            }
+          });
+        } else {
+          toast.error('Availability Check Failed', {
+            description: errorData.message || errorData.error || 'Failed to check availability. Please try again.'
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error checking availability status:', error);
+      toast.error('Error checking availability status');
+    }
+  };
+
   const valueToString = (value: unknown): string => {
     if (value === null || value === undefined) return '';
     if (value instanceof Date) return formatDate(value.toString());
@@ -813,12 +977,22 @@ export default function LeadsPage() {
               ))}
             </select>
             {selectedIds.length > 0 && (
-              <button
-                onClick={handleDeleteSelected}
-                className="flex items-center px-3 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
-              >
-                <Trash2 className="w-4 h-4 mr-1" />
-              </button>
+              <>
+                <button
+                  onClick={recheckBulkAvailability}
+                  className="flex items-center px-3 py-2 border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 transition-colors cursor-pointer"
+                  title="Recheck Availability for Selected Leads"
+                >
+                  <Zap className="w-4 h-4 mr-1" />
+                  <span className="text-body-small font-body-small">Recheck</span>
+                </button>
+                <button
+                  onClick={handleDeleteSelected}
+                  className="flex items-center px-3 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4 mr-1" />
+                </button>
+              </>
             )}
             <button
               onClick={() => {
@@ -829,9 +1003,15 @@ export default function LeadsPage() {
                   lastName: '',
                   email: '',
                   phone: '',
+                  altPhone1: '',
+                  altPhone2: '',
+                  altPhone3: '',
+                  altEmail1: '',
+                  altEmail2: '',
+                  altEmail3: '',
                   source: 'manual',
                   createdAt: new Date().toISOString(),
-                  availabilityStatus: 'checking'
+                  availabilityStatus: undefined // Don't set to 'checking' initially
                 });
                 setMessageText('');
                 setSendImmediately(true);
@@ -967,6 +1147,7 @@ export default function LeadsPage() {
                             >
                               Send Message
                             </button>
+                            <button onClick={() => { recheckSingleAvailability(lead._id); setOpenMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-gray-50 text-blue-600">Recheck Availability</button>
                             <button onClick={() => { deleteSingleLead(lead._id); setOpenMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-gray-50 text-red-600">Delete</button>
                           </div>
                         )}
@@ -1262,6 +1443,7 @@ export default function LeadsPage() {
                 <div className="text-xs text-gray-500 mt-1 flex items-center"><Info className="w-3 h-3 mr-1" /> Created {formatDate(sidebarLead.createdAt)} · List: {listIdToName(sidebarLead.listId)}</div>
               </div>
               <div className="flex items-center space-x-2">
+                <button onClick={() => recheckSingleAvailability(sidebarLead._id)} className="px-3 py-2 border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50" title="Recheck Availability"><Zap className="w-4 h-4" /></button>
                 <button onClick={() => deleteSingleLead(sidebarLead._id)} className="px-3 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50" title="Delete"><Trash2 className="w-4 h-4" /></button>
                 <button onClick={() => setSidebarLead(null)} className="p-2 text-gray-600 hover:text-gray-900"><X className="w-5 h-5" /></button>
               </div>
@@ -1428,39 +1610,44 @@ export default function LeadsPage() {
                       <label className="block text-sm font-medium text-gray-700 mb-2">
                         Phone Number
                       </label>
-                      <input
-                        type="text"
-                        value={selectedLeadForMessage.phone}
-                        onChange={(e) => setSelectedLeadForMessage(prev => prev ? { ...prev, phone: e.target.value } : null)}
-                        placeholder="Phone number (+1234567890)"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                      />
+                      <div className="flex items-end gap-3">
+                        <div className="flex-1">
+                          <input
+                            type="text"
+                            value={selectedLeadForMessage.phone}
+                            onChange={(e) => setSelectedLeadForMessage(prev => prev ? { ...prev, phone: e.target.value } : null)}
+                            placeholder="Phone number (+1234567890)"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                          />
+                        </div>
+                        <button
+                          onClick={checkQuickSendAvailability}
+                          disabled={selectedLeadForMessage.availabilityStatus === 'checking'}
+                          className="flex flex-col items-center justify-center px-3 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors min-w-[60px]"
+                        >
+                           {selectedLeadForMessage.availabilityStatus !== 'checking' ? <Zap className="w-4 h-4" /> : <LoaderCircle className="w-4 h-4 animate-spin" /> } 
+                          
+                        </button>
+                      </div>
                     </div>
                     
-                    {/* Check Availability Button */}
-                    <div className="flex items-center justify-between">
-                      <button
-                        onClick={checkQuickSendAvailability}
-                        disabled={selectedLeadForMessage.availabilityStatus === 'checking'}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {selectedLeadForMessage.availabilityStatus === 'checking' ? 'Checking...' : 'Check Availability'}
-                      </button>
-                      
-                      <div className="text-sm">
-                        {selectedLeadForMessage.availabilityStatus === 'checking' && (
-                          <span className="text-yellow-600">• Checking availability...</span>
-                        )}
-                        {selectedLeadForMessage.availabilityStatus === 'available' && (
-                          <span className="text-blue-600">• iMessage available</span>
-                        )}
-                        {selectedLeadForMessage.availabilityStatus === 'unavailable' && (
-                          <span className="text-gray-500">• SMS only</span>
-                        )}
-                        {selectedLeadForMessage.availabilityStatus === 'error' && (
-                          <span className="text-red-600">• Error checking availability</span>
-                        )}
-                      </div>
+                    {/* Status Display */}
+                    <div className="text-sm">
+                      {selectedLeadForMessage.availabilityStatus === 'checking' && (
+                        <span className="text-yellow-600">• Checking availability...</span>
+                      )}
+                      {selectedLeadForMessage.availabilityStatus === 'available' && (
+                        <span className="text-blue-600">• iMessage available</span>
+                      )}
+                      {selectedLeadForMessage.availabilityStatus === 'unavailable' && (
+                        <span className="text-gray-500">• SMS only</span>
+                      )}
+                      {selectedLeadForMessage.availabilityStatus === 'error' && (
+                        <span className="text-red-600">• Error checking availability</span>
+                      )}
+                      {(!selectedLeadForMessage.availabilityStatus || selectedLeadForMessage.availabilityStatus === undefined) && (
+                        <span className="text-gray-500">• Click &quot;Check&quot; to verify iMessage support</span>
+                      )}
                     </div>
                   </>
                 ) : (
