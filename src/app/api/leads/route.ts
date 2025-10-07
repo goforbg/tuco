@@ -22,16 +22,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid leads data' }, { status: 400 });
     }
 
+    if (!listId) {
+      return NextResponse.json({ error: 'List ID is required' }, { status: 400 });
+    }
+
     const { db } = await connectDB();
 
-    // Validate listId if provided (must belong to same workspace)
-    if (listId) {
-      const list = await db.collection<IList>(ListCollection)
-        .findOne({ _id: new ObjectId(listId), workspaceId: orgId });
-      
-      if (!list) {
-        return NextResponse.json({ error: 'List not found' }, { status: 404 });
-      }
+    // Validate listId (must belong to same workspace)
+    const list = await db.collection<IList>(ListCollection)
+      .findOne({ _id: new ObjectId(listId), workspaceId: orgId });
+    
+    if (!list) {
+      return NextResponse.json({ error: 'List not found' }, { status: 404 });
     }
 
     // Process and validate leads
@@ -68,7 +70,8 @@ export async function POST(request: NextRequest) {
         linkedinUrl: lead.linkedinUrl ? String(lead.linkedinUrl) : undefined,
         notes: lead.notes ? String(lead.notes) : undefined,
         customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
-        listId: listId ? new ObjectId(listId) : undefined,
+        availabilityStatus: 'checking' as const, // Default to checking status
+        listId: new ObjectId(listId),
         workspaceId: orgId,
         contactOwnerId: (lead as Record<string, unknown>).contactOwnerId ? String((lead as Record<string, unknown>).contactOwnerId) : userId,
         createdByUserId: userId,
@@ -81,15 +84,53 @@ export async function POST(request: NextRequest) {
     // Insert leads into database
     const result = await db.collection<ILead>(LeadCollection).insertMany(processedLeads);
 
-    // Update list lead count if listId provided
-    if (listId) {
-      await db.collection<IList>(ListCollection).updateOne(
-        { _id: new ObjectId(listId), workspaceId: orgId },
-        { 
-          $inc: { leadCount: result.insertedCount },
-          $set: { updatedAt: new Date() }
+    // Update list lead count
+    await db.collection<IList>(ListCollection).updateOne(
+      { _id: new ObjectId(listId), workspaceId: orgId },
+      { 
+        $inc: { leadCount: result.insertedCount },
+        $set: { updatedAt: new Date() }
+      }
+    );
+
+    // Trigger bulk availability checking for new leads (async, don't wait)
+    if (result.insertedCount > 0) {
+      const leadIds = Object.values(result.insertedIds).map(id => id.toString());
+      
+      // Start bulk availability checking in background with proper auth
+      fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/leads/check-availability`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await auth().then(auth => auth.getToken())}`,
+          'X-User-ID': userId,
+          'X-Org-ID': orgId,
+        },
+        body: JSON.stringify({ leadIds }),
+      }).then(async (response) => {
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error('Error triggering bulk availability check:', errorData);
+          
+          // If it's a NO_ACTIVE_LINE error, update all leads to no_active_line status
+          if (errorData.error === 'NO_ACTIVE_LINE') {
+            console.log('Availability checking skipped: No active line configured');
+            
+            // Update all leads to no_active_line status
+            await db.collection<ILead>(LeadCollection).updateMany(
+              { _id: { $in: leadIds.map(id => new ObjectId(id)) } },
+              {
+                $set: {
+                  availabilityStatus: 'no_active_line' as const,
+                  updatedAt: new Date(),
+                },
+              }
+            );
+          }
         }
-      );
+      }).catch(error => {
+        console.error('Error triggering bulk availability check:', error);
+      });
     }
 
     return NextResponse.json({ 

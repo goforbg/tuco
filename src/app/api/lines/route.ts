@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import connectDB from '@/lib/mongodb';
 import { ILine, LineCollection } from '@/models/Line';
+import { MessageCollection } from '@/models/Message';
 import { ObjectId } from 'mongodb';
 import { sendTelegramNotification } from '@/lib/telegram';
 
@@ -24,13 +25,69 @@ export async function GET() {
       .sort({ createdAt: -1 })
       .toArray();
 
-    // Strip critical server-only properties before sending to frontend
-    const safeLines = lines.map(({ serverUrl, ...line }) => {
-      // serverUrl is intentionally excluded for security
-      return line;
-    });
+    // Get today's date for usage calculation
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
 
-    return NextResponse.json({ lines: safeLines });
+    // Get message usage for each line
+    const linesWithUsage = await Promise.all(
+      lines.map(async (line) => {
+        // Count messages sent today from this line
+        const messageUsage = await db
+          .collection(MessageCollection)
+          .aggregate([
+            {
+              $match: {
+                fromLineId: line._id,
+                workspaceId: orgId,
+                createdAt: {
+                  $gte: today,
+                  $lt: tomorrow,
+                },
+                status: { $in: ['sent', 'delivered'] },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                totalMessages: { $sum: 1 },
+                uniqueConversations: {
+                  $addToSet: {
+                    $cond: [
+                      { $ifNull: ['$recipientEmail', false] },
+                      '$recipientEmail',
+                      '$recipientPhone',
+                    ],
+                  },
+                },
+              },
+            },
+          ])
+          .toArray();
+
+        const usage = messageUsage[0] || {
+          totalMessages: 0,
+          uniqueConversations: [],
+        };
+
+        // Strip critical server-only properties before sending to frontend
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { serverUrl, ...safeLine } = line;
+        
+        return {
+          ...safeLine,
+          usage: {
+            date: today.toISOString().split('T')[0],
+            newConversationsCount: usage.uniqueConversations.length,
+            totalMessagesCount: usage.totalMessages,
+          },
+        };
+      })
+    );
+
+    return NextResponse.json({ lines: linesWithUsage });
   } catch (error) {
     console.error('Error fetching lines:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -189,6 +246,7 @@ export async function PUT(request: NextRequest) {
     }
 
     // Strip critical server-only properties before sending to frontend
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { serverUrl, ...safeLine } = updatedLine;
     // serverUrl is intentionally excluded for security
 

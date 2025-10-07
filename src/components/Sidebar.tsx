@@ -33,7 +33,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
     { id: 'overview', label: 'Overview', icon: Home, href: '/' },
     { id: 'leads', label: 'Leads', icon: Users, href: '/leads' },
     { id: 'lines', label: 'Lines', icon: Smartphone, href: '/lines' },
-    { id: 'activity', label: 'Activity Logs', icon: Activity },
+    { id: 'activity', label: 'Activity Logs', icon: Activity, href: '/activities' },
     { id: 'usage', label: 'Usage', icon: BarChart3 },
     { id: 'api-keys', label: 'API Keys', icon: Key },
     { id: 'settings', label: 'Settings', icon: Settings },

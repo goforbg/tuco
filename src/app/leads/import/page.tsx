@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Upload, 
   Download, 
@@ -42,6 +42,12 @@ interface ProcessedLead {
   lastName: string;
   email: string;
   phone: string;
+  altPhone1?: string;
+  altPhone2?: string;
+  altPhone3?: string;
+  altEmail1?: string;
+  altEmail2?: string;
+  altEmail3?: string;
   companyName?: string;
   jobTitle?: string;
   linkedinUrl?: string;
@@ -99,15 +105,1009 @@ const requiredFields = [
   { key: 'lastName', label: 'Last Name', required: true },
   { key: 'email', label: 'Email', required: true },
   { key: 'phone', label: 'Phone', required: true },
+  { key: 'altPhone1', label: 'Alt Phone 1', required: false },
+  { key: 'altPhone2', label: 'Alt Phone 2', required: false },
+  { key: 'altPhone3', label: 'Alt Phone 3', required: false },
+  { key: 'altEmail1', label: 'Alt Email 1', required: false },
+  { key: 'altEmail2', label: 'Alt Email 2', required: false },
+  { key: 'altEmail3', label: 'Alt Email 3', required: false },
   { key: 'companyName', label: 'Company Name', required: false },
   { key: 'jobTitle', label: 'Job Title', required: false },
   { key: 'linkedinUrl', label: 'LinkedIn URL', required: false },
   { key: 'notes', label: 'Notes', required: false },
 ];
 
+// Step Components
+const ImportMethodSelector = ({ onSelect }: { onSelect: (optionId: string) => void }) => (
+  <div className="p-8">
+    <div className="text-center mb-8">
+      <h2 className="text-2xl font-semibold text-gray-900 mb-2">Choose Import Method</h2>
+      <p className="text-gray-600">Select how you&apos;d like to import your leads</p>
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {importOptions.map((option) => {
+        const Icon = option.icon;
+        
+        return (
+          <div
+            key={option.id}
+            className="relative bg-white rounded-lg border-2 border-gray-200 hover:border-primary transition-all duration-200 cursor-pointer group"
+            onClick={() => onSelect(option.id)}
+          >
+            {option.premium && (
+              <div className="absolute top-4 right-4">
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary text-white">
+                  Premium
+                </span>
+              </div>
+            )}
+            
+            <div className="p-6">
+              <div className="flex items-start space-x-4">
+                <div className={`w-12 h-12 ${option.bgColor} rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform duration-200`}>
+                  <Icon className={`w-6 h-6 ${option.color}`} />
+                </div>
+                
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-1">{option.title}</h3>
+                  <p className="text-sm text-gray-600 mb-4">{option.description}</p>
+                  
+                  <ul className="space-y-2 mb-6">
+                    {option.features.map((feature, index) => (
+                      <li key={index} className="flex items-center text-sm text-gray-600">
+                        <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
+                        {feature}
+                      </li>
+                    ))}
+                  </ul>
+                  
+                  <div className="flex items-center text-primary font-medium">
+                    <span className="text-sm">{option.action}</span>
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  </div>
+);
+
+const CSVUploadAndSetup = ({ 
+  onFileUpload, 
+  isUploading, 
+  uploadStatus, 
+  errorMessage, 
+  csvDataLength,
+  onBack,
+  onContinue,
+  lists,
+  selectedListId,
+  setSelectedListId,
+  listMode,
+  setListMode,
+  newListName,
+  setNewListName
+}: {
+  onFileUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  isUploading: boolean;
+  uploadStatus: 'idle' | 'success' | 'error';
+  errorMessage: string;
+  csvDataLength: number;
+  onBack: () => void;
+  onContinue: () => void;
+  lists: Array<{ _id: string; name: string }>;
+  selectedListId: string;
+  setSelectedListId: (id: string) => void;
+  listMode: 'existing' | 'new';
+  setListMode: (mode: 'existing' | 'new') => void;
+  newListName: string;
+  setNewListName: (name: string) => void;
+}) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <div className="p-8">
+      <div className="flex items-center mb-6">
+        <button
+          onClick={onBack}
+          className="flex items-center text-gray-600 hover:text-gray-900 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          Back
+        </button>
+      </div>
+
+      <div className="max-w-4xl mx-auto">
+        <div className="text-center mb-8">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-2">Upload CSV File & Setup</h2>
+          <p className="text-gray-600">Upload your CSV file and configure where to save the leads</p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Upload Section */}
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">1. Upload CSV File</h3>
+            <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-primary transition-colors">
+              <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <h4 className="text-lg font-medium text-gray-900 mb-2">Drop your CSV file here</h4>
+              <p className="text-gray-600 mb-6">
+                Or click to browse your computer
+              </p>
+              
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv"
+                onChange={onFileUpload}
+                className="hidden"
+              />
+              
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors font-medium"
+              >
+                {isUploading ? 'Uploading...' : 'Choose File'}
+              </button>
+
+              {uploadStatus === 'success' && (
+                <div className="mt-4 flex items-center justify-center text-green-600">
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  <span className="text-sm font-medium">
+                    File uploaded successfully! {csvDataLength} records found.
+                  </span>
+                </div>
+              )}
+
+              {uploadStatus === 'error' && (
+                <div className="mt-4 flex items-center justify-center text-red-600">
+                  <AlertCircle className="w-4 h-4 mr-2" />
+                  <span className="text-sm font-medium">{errorMessage}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* List Selection Section */}
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">2. Select List</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-3">Where should these leads go?</label>
+                <div className="space-y-4">
+                  <label className="flex items-center space-x-3">
+                    <input 
+                      type="radio" 
+                      name="listMode" 
+                      className="h-4 w-4" 
+                      checked={listMode === 'existing'} 
+                      onChange={() => setListMode('existing')} 
+                    />
+                    <span className="text-sm text-gray-800">Add to existing list</span>
+                  </label>
+                  
+                  {listMode === 'existing' && (
+                    <select
+                      value={selectedListId}
+                      onChange={(e) => setSelectedListId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                    >
+                      <option value="">Select a list…</option>
+                      {lists.map((l) => (
+                        <option key={l._id} value={l._id}>{l.name}</option>
+                      ))}
+                    </select>
+                  )}
+
+                  <label className="flex items-center space-x-3 mt-4">
+                    <input 
+                      type="radio" 
+                      name="listMode" 
+                      className="h-4 w-4" 
+                      checked={listMode === 'new'} 
+                      onChange={() => setListMode('new')} 
+                    />
+                    <span className="text-sm text-gray-800">Create a new list</span>
+                  </label>
+                  
+                  {listMode === 'new' && (
+                    <div className="space-y-3">
+                      <input
+                        type="text"
+                        value={newListName}
+                        onChange={(e) => setNewListName(e.target.value)}
+                        placeholder="Enter new list name"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Continue Button */}
+        <div className="flex justify-end mt-8">
+          <button
+            onClick={() => {
+              console.log('=== BUTTON CLICKED ===');
+              console.log('uploadStatus:', uploadStatus);
+              console.log('listMode:', listMode);
+              console.log('selectedListId:', selectedListId);
+              console.log('newListName:', newListName);
+              const isDisabled = uploadStatus !== 'success' || ((listMode === 'existing' && !selectedListId) || (listMode === 'new' && !newListName.trim()));
+              console.log('Button disabled:', isDisabled);
+              if (!isDisabled) {
+                onContinue();
+              } else {
+                console.log('Button is disabled, not calling onContinue');
+              }
+            }}
+            disabled={uploadStatus !== 'success' || ((listMode === 'existing' && !selectedListId) || (listMode === 'new' && !newListName.trim()))}
+            className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+          >
+            Continue to Field Mapping
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+const FieldMapper = ({
+  csvHeaders,
+  fieldMapping,
+  setFieldMapping,
+  csvData,
+  onBack,
+  onContinue,
+  isProcessing
+}: {
+  csvHeaders: string[];
+  fieldMapping: FieldMapping;
+  setFieldMapping: React.Dispatch<React.SetStateAction<FieldMapping>>;
+  csvData: Record<string, string>[];
+  onBack: () => void;
+  onContinue: () => void;
+  isProcessing: boolean;
+}) => {
+  const autoMapFields = () => {
+    const mapping: FieldMapping = {};
+    const usedHeaders = new Set<string>();
+    
+    // Helper function to check if header is available and mark it as used
+    const assignField = (fieldKey: string, header: string) => {
+      if (!usedHeaders.has(header) && !mapping[fieldKey]) {
+        mapping[fieldKey] = header;
+        usedHeaders.add(header);
+      }
+    };
+    
+    csvHeaders.forEach(header => {
+      const lowerHeader = header.toLowerCase().trim();
+      const normalizedHeader = lowerHeader.replace(/[_\s-]/g, '');
+      
+      // Primary phone matching (highest priority for phone)
+      if (
+        normalizedHeader === 'phone' ||
+        normalizedHeader === 'phonenumber' ||
+        normalizedHeader === 'phone_number' ||
+        lowerHeader.includes('phone') ||
+        lowerHeader.includes('mobile') ||
+        lowerHeader.includes('cell') ||
+        lowerHeader === 'tel' ||
+        lowerHeader === 'telephone' ||
+        lowerHeader === 'contactnumber'
+      ) {
+        assignField('phone', header);
+      }
+      // Primary email matching (highest priority for email)
+      else if (
+        normalizedHeader === 'email' ||
+        normalizedHeader === 'emailaddress' ||
+        lowerHeader.includes('email') ||
+        lowerHeader === 'e_mail' ||
+        lowerHeader === 'mail'
+      ) {
+        assignField('email', header);
+      }
+      // First name matching
+      else if (
+        normalizedHeader === 'firstname' ||
+        normalizedHeader === 'first_name' ||
+        lowerHeader.includes('first') && lowerHeader.includes('name') ||
+        lowerHeader === 'fname' ||
+        lowerHeader === 'givenname'
+      ) {
+        assignField('firstName', header);
+      }
+      // Last name matching
+      else if (
+        normalizedHeader === 'lastname' ||
+        normalizedHeader === 'last_name' ||
+        lowerHeader.includes('last') && lowerHeader.includes('name') ||
+        lowerHeader === 'lname' ||
+        lowerHeader === 'surname' ||
+        lowerHeader === 'familyname'
+      ) {
+        assignField('lastName', header);
+      }
+      // Alt phone matching (more specific patterns first)
+      else if (
+        normalizedHeader === 'altphone1' ||
+        normalizedHeader === 'alt_phone1' ||
+        lowerHeader.includes('alt') && lowerHeader.includes('phone') && lowerHeader.includes('1') ||
+        lowerHeader === 'phone2' ||
+        lowerHeader === 'secondaryphone'
+      ) {
+        assignField('altPhone1', header);
+      }
+      else if (
+        normalizedHeader === 'altphone2' ||
+        normalizedHeader === 'alt_phone2' ||
+        lowerHeader.includes('alt') && lowerHeader.includes('phone') && lowerHeader.includes('2') ||
+        lowerHeader === 'phone3' ||
+        lowerHeader === 'tertiaryphone'
+      ) {
+        assignField('altPhone2', header);
+      }
+      else if (
+        normalizedHeader === 'altphone3' ||
+        normalizedHeader === 'alt_phone3' ||
+        lowerHeader.includes('alt') && lowerHeader.includes('phone') && lowerHeader.includes('3') ||
+        lowerHeader === 'phone4' ||
+        lowerHeader === 'quaternaryphone'
+      ) {
+        assignField('altPhone3', header);
+      }
+      // Alt email matching (more specific patterns first)
+      else if (
+        normalizedHeader === 'altemail1' ||
+        normalizedHeader === 'alt_email1' ||
+        lowerHeader.includes('alt') && lowerHeader.includes('email') && lowerHeader.includes('1') ||
+        lowerHeader === 'email2' ||
+        lowerHeader === 'secondaryemail'
+      ) {
+        assignField('altEmail1', header);
+      }
+      else if (
+        normalizedHeader === 'altemail2' ||
+        normalizedHeader === 'alt_email2' ||
+        lowerHeader.includes('alt') && lowerHeader.includes('email') && lowerHeader.includes('2') ||
+        lowerHeader === 'email3' ||
+        lowerHeader === 'tertiaryemail'
+      ) {
+        assignField('altEmail2', header);
+      }
+      else if (
+        normalizedHeader === 'altemail3' ||
+        normalizedHeader === 'alt_email3' ||
+        lowerHeader.includes('alt') && lowerHeader.includes('email') && lowerHeader.includes('3') ||
+        lowerHeader === 'email4' ||
+        lowerHeader === 'quaternaryemail'
+      ) {
+        assignField('altEmail3', header);
+      }
+      // Company matching
+      else if (
+        normalizedHeader === 'company' ||
+        normalizedHeader === 'companyname' ||
+        normalizedHeader === 'company_name' ||
+        lowerHeader.includes('company') ||
+        lowerHeader === 'organization' ||
+        lowerHeader === 'org' ||
+        lowerHeader === 'employer' ||
+        lowerHeader === 'business'
+      ) {
+        assignField('companyName', header);
+      }
+      // Job title matching
+      else if (
+        normalizedHeader === 'title' ||
+        normalizedHeader === 'jobtitle' ||
+        normalizedHeader === 'job_title' ||
+        lowerHeader.includes('title') ||
+        lowerHeader.includes('position') ||
+        lowerHeader === 'role' ||
+        lowerHeader === 'designation' ||
+        lowerHeader === 'occupation'
+      ) {
+        assignField('jobTitle', header);
+      }
+      // LinkedIn matching
+      else if (
+        normalizedHeader === 'linkedin' ||
+        normalizedHeader === 'linkedinurl' ||
+        normalizedHeader === 'linkedin_url' ||
+        lowerHeader.includes('linkedin') ||
+        lowerHeader === 'li_url' ||
+        lowerHeader === 'linkedinprofile'
+      ) {
+        assignField('linkedinUrl', header);
+      }
+      // Notes matching
+      else if (
+        normalizedHeader === 'notes' ||
+        normalizedHeader === 'note' ||
+        lowerHeader.includes('note') ||
+        lowerHeader.includes('comment') ||
+        lowerHeader === 'description' ||
+        lowerHeader === 'remarks' ||
+        lowerHeader === 'additionalinfo'
+      ) {
+        assignField('notes', header);
+      }
+    });
+    
+    setFieldMapping(mapping);
+  };
+
+  const formatPhoneNumber = (phone: string): string => {
+    if (!phone) return '';
+    const digitsOnly = phone.replace(/\D/g, '');
+    if (digitsOnly.length === 11 && digitsOnly.startsWith('1')) {
+      return `+${digitsOnly}`;
+    }
+    if (digitsOnly.length === 10) {
+      return `+1${digitsOnly}`;
+    }
+    if (digitsOnly.length >= 11 && digitsOnly.length <= 15) {
+      return `+${digitsOnly}`;
+    }
+    return digitsOnly ? `+${digitsOnly}` : '';
+  };
+
+  const formatEmail = (email: string): string => {
+    if (!email) return '';
+    const cleaned = email.trim().toLowerCase();
+    if (cleaned.includes('@') && cleaned.includes('.')) {
+      return cleaned;
+    }
+    return cleaned;
+  };
+
+  return (
+    <div className="p-8">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-2xl font-semibold text-gray-900 mb-2">Map CSV Columns</h2>
+          <p className="text-gray-600">Match your CSV columns to our lead fields</p>
+        </div>
+        <button
+          onClick={autoMapFields}
+          className="px-4 py-2 text-sm font-medium text-primary hover:text-primary/80 transition-colors"
+        >
+          Auto-map Fields
+        </button>
+      </div>
+
+      <div className="space-y-6">
+        {requiredFields.map((field) => {
+          const selectedColumn = fieldMapping[field.key];
+          const sampleValue = selectedColumn ? csvData[0]?.[selectedColumn] : null;
+          
+          return (
+            <div key={field.key} className="space-y-2">
+              <div className="flex items-center space-x-4">
+                <div className="w-32">
+                  <label className="block text-sm font-medium text-gray-900">
+                    {field.label}
+                    {field.required && <span className="text-red-500 ml-1">*</span>}
+                  </label>
+                </div>
+                <div className="flex-1">
+                  <select
+                    value={fieldMapping[field.key] || ''}
+                    onChange={(e) => {
+                      const selectedHeader = e.target.value;
+                      // Remove the header from other fields if it's being selected
+                      setFieldMapping(prev => {
+                        const newMapping = { ...prev };
+                        
+                        // Clear the field if empty selection
+                        if (!selectedHeader) {
+                          delete newMapping[field.key];
+                          return newMapping;
+                        }
+                        
+                        // Remove this header from all other fields
+                        Object.keys(newMapping).forEach(key => {
+                          if (key !== field.key && newMapping[key] === selectedHeader) {
+                            delete newMapping[key];
+                          }
+                        });
+                        
+                        // Set the new mapping
+                        newMapping[field.key] = selectedHeader;
+                        return newMapping;
+                      });
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                  >
+                    <option value="">Select column...</option>
+                    {csvHeaders.map((header) => {
+                      const isUsedElsewhere = Object.values(fieldMapping).includes(header) && fieldMapping[field.key] !== header;
+                      return (
+                        <option key={header} value={header} disabled={isUsedElsewhere}>
+                          {header} {isUsedElsewhere ? '(already mapped)' : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              </div>
+              
+              {selectedColumn && sampleValue && (
+                <div className="ml-36">
+                  <span className="text-xs text-gray-500">Sample: </span>
+                  <span className="text-xs text-gray-700">
+                    {field.key === 'phone' ? formatPhoneNumber(sampleValue) : 
+                     field.key === 'email' ? formatEmail(sampleValue) : 
+                     sampleValue}
+                  </span>
+                </div>
+              )}
+              
+              {field.key === 'phone' && selectedColumn && (
+                <div className="ml-36">
+                  <span className="text-xs text-gray-500">Note: Phone numbers will be automatically formatted with country codes</span>
+                </div>
+              )}
+              {field.key === 'email' && selectedColumn && (
+                <div className="ml-36">
+                  <span className="text-xs text-gray-500">Note: Emails will be automatically cleaned and converted to lowercase</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex justify-between mt-8">
+        <button
+          onClick={onBack}
+          className="flex items-center px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+        >
+          <ChevronLeft className="w-4 h-4 mr-2" />
+          Back
+        </button>
+        <button 
+          onClick={onContinue}
+          disabled={!fieldMapping.firstName || !fieldMapping.lastName || !fieldMapping.email || !fieldMapping.phone || isProcessing}
+          className="flex items-center px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors font-medium"
+        >
+          {isProcessing ? 'Processing...' : 'Continue'}
+          <ChevronRight className="w-4 h-4 ml-2" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const DataPreview = ({
+  processedLeads,
+  csvData,
+  fileName,
+  onBack,
+  onImport,
+  isSaving
+}: {
+  processedLeads: ProcessedLead[];
+  csvData: Record<string, string>[];
+  fileName: string;
+  onBack: () => void;
+  onImport: () => void;
+  isSaving: boolean;
+}) => (
+  <div className="p-8">
+    <div className="mb-6">
+      <h2 className="text-2xl font-semibold text-gray-900 mb-2">Preview Your Data</h2>
+      <p className="text-gray-600">
+        Review {processedLeads.length} leads before importing
+      </p>
+    </div>
+
+    <div className="bg-gray-50 rounded-lg p-4 mb-6">
+      <div className="grid grid-cols-4 gap-4 text-sm">
+        <div>
+          <span className="font-medium text-gray-700">Total Records:</span>
+          <span className="ml-2 text-gray-900">{csvData.length}</span>
+        </div>
+        <div>
+          <span className="font-medium text-gray-700">Valid Leads:</span>
+          <span className="ml-2 text-green-600">{processedLeads.length}</span>
+        </div>
+        <div>
+          <span className="font-medium text-gray-700">Invalid Records:</span>
+          <span className="ml-2 text-red-600">{csvData.length - processedLeads.length}</span>
+        </div>
+        <div>
+          <span className="font-medium text-gray-700">File:</span>
+          <span className="ml-2 text-gray-900">{fileName}</span>
+        </div>
+      </div>
+    </div>
+
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Name
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Primary Email
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Alt Emails
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Primary Phone
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Alt Phones
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Company
+            </th>
+          </tr>
+        </thead>
+        <tbody className="bg-white divide-y divide-gray-200">
+          {processedLeads.slice(0, 10).map((lead, index) => (
+            <tr key={index}>
+              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                {lead.firstName} {lead.lastName}
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                {lead.email}
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                <div className="space-y-1">
+                  {lead.altEmail1 && <div className="text-xs text-gray-400">{lead.altEmail1}</div>}
+                  {lead.altEmail2 && <div className="text-xs text-gray-400">{lead.altEmail2}</div>}
+                  {lead.altEmail3 && <div className="text-xs text-gray-400">{lead.altEmail3}</div>}
+                  {!lead.altEmail1 && !lead.altEmail2 && !lead.altEmail3 && <span className="text-gray-400">-</span>}
+                </div>
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                {lead.phone}
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                <div className="space-y-1">
+                  {lead.altPhone1 && <div className="text-xs text-gray-400">{lead.altPhone1}</div>}
+                  {lead.altPhone2 && <div className="text-xs text-gray-400">{lead.altPhone2}</div>}
+                  {lead.altPhone3 && <div className="text-xs text-gray-400">{lead.altPhone3}</div>}
+                  {!lead.altPhone1 && !lead.altPhone2 && !lead.altPhone3 && <span className="text-gray-400">-</span>}
+                </div>
+              </td>
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                {lead.companyName || '-'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    {processedLeads.length > 10 && (
+      <p className="text-gray-500 text-sm mt-4 text-center">
+        Showing first 10 of {processedLeads.length} records
+      </p>
+    )}
+
+    <div className="flex justify-between mt-8">
+      <button
+        onClick={onBack}
+        className="flex items-center px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+      >
+        <ChevronLeft className="w-4 h-4 mr-2" />
+        Back
+      </button>
+      <button
+        onClick={onImport}
+        disabled={processedLeads.length === 0 || isSaving}
+        className="flex items-center px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors font-medium"
+      >
+        {isSaving ? 'Importing...' : `Import ${processedLeads.length} Leads`}
+        <Save className="w-4 h-4 ml-2" />
+      </button>
+    </div>
+  </div>
+);
+
+const ImportComplete = ({
+  importSummary,
+  fileName,
+  processedLeads,
+  onViewLeads,
+  onImportMore
+}: {
+  importSummary: { savedCount: number; invalidCount: number; listName?: string } | null;
+  fileName: string;
+  processedLeads: ProcessedLead[];
+  onViewLeads: () => void;
+  onImportMore: () => void;
+}) => (
+  <div className="p-8 text-center">
+    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+      <CheckCircle className="w-8 h-8 text-green-600" />
+    </div>
+    
+    <h2 className="text-2xl font-semibold text-gray-900 mb-2">Import Complete</h2>
+    <div className="mx-auto max-w-md bg-gray-50 rounded-lg p-4 text-left">
+      <div className="flex justify-between py-2">
+        <span className="text-gray-600">File</span>
+        <span className="text-gray-900">{fileName}</span>
+      </div>
+      <div className="flex justify-between py-2">
+        <span className="text-gray-600">Saved</span>
+        <span className="text-green-700 font-medium">{importSummary?.savedCount ?? processedLeads.length}</span>
+      </div>
+      <div className="flex justify-between py-2">
+        <span className="text-gray-600">Invalid</span>
+        <span className="text-red-600">{importSummary?.invalidCount ?? 0}</span>
+      </div>
+      <div className="flex justify-between py-2">
+        <span className="text-gray-600">List</span>
+        <span className="text-gray-900">{importSummary?.listName || 'CSV Import'}</span>
+      </div>
+    </div>
+
+    <div className="flex justify-center space-x-4 mt-8">
+      <button
+        onClick={onViewLeads}
+        className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium"
+      >
+        View Leads
+      </button>
+      <button
+        onClick={onImportMore}
+        className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+      >
+        Import More
+      </button>
+    </div>
+  </div>
+);
+
+// Quick Send Component
+const QuickSend = ({
+  onBack,
+  onSend
+}: {
+  onBack: () => void;
+  onSend: (phoneOrEmail: string, message: string, sendNow: boolean, scheduledDate?: Date) => Promise<void>;
+}) => {
+  const [phoneOrEmail, setPhoneOrEmail] = useState('');
+  const [message, setMessage] = useState('');
+  const [sendNow, setSendNow] = useState(true);
+  const [scheduledDate, setScheduledDate] = useState('');
+  const [scheduledTime, setScheduledTime] = useState('');
+  const [isCheckingAvailability, setIsCheckingAvailability] = useState(false);
+  const [availabilityStatus, setAvailabilityStatus] = useState<'unknown' | 'available' | 'unavailable'>('unknown');
+  const [isSending, setIsSending] = useState(false);
+
+  // Check availability when phone/email changes
+  useEffect(() => {
+    const checkAvailability = async () => {
+      if (!phoneOrEmail.trim()) {
+        setAvailabilityStatus('unknown');
+        return;
+      }
+
+      setIsCheckingAvailability(true);
+      try {
+        // Call the availability check API
+        const response = await fetch('/api/leads/check-availability', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            leadIds: [], // We'll check individual address
+            address: phoneOrEmail.trim()
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setAvailabilityStatus(data.available ? 'available' : 'unavailable');
+        } else {
+          setAvailabilityStatus('unknown');
+        }
+      } catch (error) {
+        console.error('Error checking availability:', error);
+        setAvailabilityStatus('unknown');
+      } finally {
+        setIsCheckingAvailability(false);
+      }
+    };
+
+    const timeoutId = setTimeout(checkAvailability, 500); // Debounce
+    return () => clearTimeout(timeoutId);
+  }, [phoneOrEmail]);
+
+  const handleSend = async () => {
+    if (!phoneOrEmail.trim() || !message.trim()) return;
+
+    setIsSending(true);
+    try {
+      let scheduledDateTime: Date | undefined;
+      if (!sendNow && scheduledDate && scheduledTime) {
+        scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
+        if (scheduledDateTime <= new Date()) {
+          alert('Scheduled time must be in the future');
+          setIsSending(false);
+          return;
+        }
+      }
+
+      await onSend(phoneOrEmail.trim(), message.trim(), sendNow, scheduledDateTime);
+    } catch (error) {
+      console.error('Error sending message:', error);
+      alert('Error sending message. Please try again.');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  return (
+    <div className="p-8">
+      <div className="flex items-center mb-6">
+        <button
+          onClick={onBack}
+          className="flex items-center text-gray-600 hover:text-gray-900 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          Back
+        </button>
+      </div>
+
+      <div className="max-w-2xl mx-auto">
+        <div className="text-center mb-8">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-2">Quick Send Message</h2>
+          <p className="text-gray-600">Send a message directly without importing leads</p>
+        </div>
+
+        <div className="space-y-6">
+          {/* Phone/Email Input */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Phone Number or Email
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                value={phoneOrEmail}
+                onChange={(e) => setPhoneOrEmail(e.target.value)}
+                placeholder="Enter phone number (+1234567890) or email address"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent pr-12"
+              />
+              <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                {isCheckingAvailability ? (
+                  <div className="w-5 h-5 border-2 border-gray-300 border-t-primary rounded-full animate-spin" />
+                ) : availabilityStatus === 'available' ? (
+                  <div className="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center">
+                    <span className="text-white text-xs font-bold">i</span>
+                  </div>
+                ) : availabilityStatus === 'unavailable' ? (
+                  <div className="w-5 h-5 bg-gray-400 rounded-full flex items-center justify-center">
+                    <span className="text-white text-xs font-bold">!</span>
+                  </div>
+                ) : (
+                  <div className="w-5 h-5 border-2 border-gray-300 rounded-full" />
+                )}
+              </div>
+            </div>
+            {availabilityStatus === 'available' && (
+              <p className="text-sm text-blue-600 mt-1">✓ This address supports iMessage</p>
+            )}
+            {availabilityStatus === 'unavailable' && (
+              <p className="text-sm text-gray-500 mt-1">This address does not support iMessage</p>
+            )}
+          </div>
+
+          {/* Message Input */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Message
+            </label>
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Enter your message here..."
+              rows={4}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+            />
+          </div>
+
+          {/* Send Options */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">
+              When to send?
+            </label>
+            <div className="flex space-x-3">
+              <button
+                onClick={() => setSendNow(true)}
+                className={`px-6 py-3 rounded-lg font-medium transition-colors ${
+                  sendNow
+                    ? 'bg-primary text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                Send Now
+              </button>
+              <button
+                onClick={() => setSendNow(false)}
+                className={`px-6 py-3 rounded-lg font-medium transition-colors ${
+                  !sendNow
+                    ? 'bg-primary text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                Send Later
+              </button>
+            </div>
+          </div>
+
+          {/* Schedule Options */}
+          {!sendNow && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Date
+                </label>
+                <input
+                  type="date"
+                  value={scheduledDate}
+                  onChange={(e) => setScheduledDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Time
+                </label>
+                <input
+                  type="time"
+                  value={scheduledTime}
+                  onChange={(e) => setScheduledTime(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Send Button */}
+          <div className="flex justify-end">
+            <button
+              onClick={handleSend}
+              disabled={!phoneOrEmail.trim() || !message.trim() || isSending || (availabilityStatus === 'unavailable')}
+              className="px-8 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+            >
+              {isSending ? 'Sending...' : sendNow ? 'Send Now' : 'Schedule Message'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function LeadsImportPage() {
   // Step management
-  const [currentStep, setCurrentStep] = useState<'select' | 'upload' | 'mapping' | 'preview' | 'confirm' | 'complete'>('select');
+  const [currentStep, setCurrentStep] = useState<'select' | 'upload' | 'list' | 'mapping' | 'preview' | 'confirm' | 'complete' | 'quickSend'>('select');
+  
+  // Debug step changes
+  useEffect(() => {
+    console.log('Step changed to:', currentStep);
+  }, [currentStep]);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   
   // CSV processing
@@ -145,8 +1145,6 @@ export default function LeadsImportPage() {
   });
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
-  
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Reset function
   const resetImport = () => {
@@ -206,19 +1204,78 @@ export default function LeadsImportPage() {
     }
   };
 
+  // Handle CSV upload and setup continue
+  const handleCSVSetupContinue = async () => {
+    console.log('=== CSV SETUP CONTINUE ===');
+    console.log('Current step:', currentStep);
+    console.log('List mode:', listMode);
+    console.log('Selected list ID:', selectedListId);
+    console.log('New list name:', newListName);
+    console.log('Upload status:', uploadStatus);
+    
+    if (listMode === 'existing') {
+      if (!selectedListId) {
+        console.log('ERROR: No selected list ID for existing mode');
+        return;
+      }
+      console.log('Moving to mapping step (existing list)');
+      setCurrentStep('mapping');
+      return;
+    }
+    
+    if (!newListName.trim()) {
+      console.log('ERROR: No new list name provided');
+      return;
+    }
+    
+    console.log('Creating new list:', newListName);
+    try {
+      const res = await fetch('/api/lists', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ name: newListName }) 
+      });
+      
+      console.log('List creation response status:', res.status);
+      
+      if (res.ok) {
+        const data = await res.json();
+        console.log('List creation response data:', data);
+        setLists((prev) => [{ _id: data.list._id, name: data.list.name }, ...prev]);
+        setSelectedListId(data.list._id);
+        setNewListName('');
+        console.log('Moving to mapping step (new list created)');
+        setCurrentStep('mapping');
+      } else {
+        const errorData = await res.json();
+        console.error('Error creating list:', errorData);
+      }
+    } catch (error) {
+      console.error('Error creating list:', error);
+    }
+  };
+
   // Handle file upload
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    console.log('File upload started');
     const file = event.target.files?.[0];
-    if (!file) return;
+    if (!file) {
+      console.log('No file selected');
+      return;
+    }
+
+    console.log('File selected:', file.name, file.size);
 
     // Validate file type
     if (!file.name.toLowerCase().endsWith('.csv')) {
+      console.log('Invalid file type');
       setErrorMessage('Please select a CSV file.');
       return;
     }
 
     // Validate file size (max 10MB)
     if (file.size > 10 * 1024 * 1024) {
+      console.log('File too large');
       setErrorMessage('File size too large. Please select a file smaller than 10MB.');
       return;
     }
@@ -227,6 +1284,7 @@ export default function LeadsImportPage() {
     setIsUploading(true);
     setUploadStatus('idle');
     setErrorMessage('');
+    console.log('Starting Papa.parse');
 
     Papa.parse(file, {
       header: true,
@@ -234,8 +1292,10 @@ export default function LeadsImportPage() {
       transformHeader: (header) => header.trim().replace(/"/g, ''),
       transform: (value) => value.trim(),
       complete: (results) => {
+        console.log('Papa.parse complete:', results);
         try {
           if (!results.data || results.data.length === 0) {
+            console.log('No data found in CSV');
             setIsUploading(false);
             setUploadStatus('error');
             setErrorMessage('No data found in CSV file.');
@@ -268,54 +1328,32 @@ export default function LeadsImportPage() {
             return;
           }
 
+          console.log('Setting CSV data:', validData.length, 'rows');
           setCsvData(validData);
           setCsvHeaders(headers);
-        setIsUploading(false);
-        setUploadStatus('success');
+          setIsUploading(false);
+          setUploadStatus('success');
+          console.log('CSV upload successful, uploadStatus set to success');
           
           // Auto-map fields after successful upload
           setTimeout(() => {
             const mapping: FieldMapping = {};
+            const usedHeaders = new Set<string>();
+            
+            // Helper function to check if header is available and mark it as used
+            const assignField = (fieldKey: string, header: string) => {
+              if (!usedHeaders.has(header) && !mapping[fieldKey]) {
+                mapping[fieldKey] = header;
+                usedHeaders.add(header);
+              }
+            };
             
             headers.forEach(header => {
               const lowerHeader = header.toLowerCase().trim();
               const normalizedHeader = lowerHeader.replace(/[_\s-]/g, ''); // Remove spaces, underscores, dashes
               
-              // Enhanced matching for firstName
+              // Primary phone matching (highest priority for phone)
               if (
-                normalizedHeader === 'firstname' ||
-                normalizedHeader === 'first_name' ||
-                normalizedHeader === 'firstname' ||
-                lowerHeader.includes('first') && lowerHeader.includes('name') ||
-                lowerHeader === 'fname' ||
-                lowerHeader === 'givenname'
-              ) {
-                mapping.firstName = header;
-              }
-              // Enhanced matching for lastName
-              else if (
-                normalizedHeader === 'lastname' ||
-                normalizedHeader === 'last_name' ||
-                normalizedHeader === 'lastname' ||
-                lowerHeader.includes('last') && lowerHeader.includes('name') ||
-                lowerHeader === 'lname' ||
-                lowerHeader === 'surname' ||
-                lowerHeader === 'familyname'
-              ) {
-                mapping.lastName = header;
-              }
-              // Enhanced matching for email
-              else if (
-                normalizedHeader === 'email' ||
-                normalizedHeader === 'emailaddress' ||
-                lowerHeader.includes('email') ||
-                lowerHeader === 'e_mail' ||
-                lowerHeader === 'mail'
-              ) {
-                mapping.email = header;
-              }
-              // Enhanced matching for phone
-              else if (
                 normalizedHeader === 'phone' ||
                 normalizedHeader === 'phonenumber' ||
                 normalizedHeader === 'phone_number' ||
@@ -326,9 +1364,96 @@ export default function LeadsImportPage() {
                 lowerHeader === 'telephone' ||
                 lowerHeader === 'contactnumber'
               ) {
-                mapping.phone = header;
+                assignField('phone', header);
               }
-              // Enhanced matching for company
+              // Primary email matching (highest priority for email)
+              else if (
+                normalizedHeader === 'email' ||
+                normalizedHeader === 'emailaddress' ||
+                lowerHeader.includes('email') ||
+                lowerHeader === 'e_mail' ||
+                lowerHeader === 'mail'
+              ) {
+                assignField('email', header);
+              }
+              // First name matching
+              else if (
+                normalizedHeader === 'firstname' ||
+                normalizedHeader === 'first_name' ||
+                lowerHeader.includes('first') && lowerHeader.includes('name') ||
+                lowerHeader === 'fname' ||
+                lowerHeader === 'givenname'
+              ) {
+                assignField('firstName', header);
+              }
+              // Last name matching
+              else if (
+                normalizedHeader === 'lastname' ||
+                normalizedHeader === 'last_name' ||
+                lowerHeader.includes('last') && lowerHeader.includes('name') ||
+                lowerHeader === 'lname' ||
+                lowerHeader === 'surname' ||
+                lowerHeader === 'familyname'
+              ) {
+                assignField('lastName', header);
+              }
+              // Alt phone matching (more specific patterns first)
+              else if (
+                normalizedHeader === 'altphone1' ||
+                normalizedHeader === 'alt_phone1' ||
+                lowerHeader.includes('alt') && lowerHeader.includes('phone') && lowerHeader.includes('1') ||
+                lowerHeader === 'phone2' ||
+                lowerHeader === 'secondaryphone'
+              ) {
+                assignField('altPhone1', header);
+              }
+              else if (
+                normalizedHeader === 'altphone2' ||
+                normalizedHeader === 'alt_phone2' ||
+                lowerHeader.includes('alt') && lowerHeader.includes('phone') && lowerHeader.includes('2') ||
+                lowerHeader === 'phone3' ||
+                lowerHeader === 'tertiaryphone'
+              ) {
+                assignField('altPhone2', header);
+              }
+              else if (
+                normalizedHeader === 'altphone3' ||
+                normalizedHeader === 'alt_phone3' ||
+                lowerHeader.includes('alt') && lowerHeader.includes('phone') && lowerHeader.includes('3') ||
+                lowerHeader === 'phone4' ||
+                lowerHeader === 'quaternaryphone'
+              ) {
+                assignField('altPhone3', header);
+              }
+              // Alt email matching (more specific patterns first)
+              else if (
+                normalizedHeader === 'altemail1' ||
+                normalizedHeader === 'alt_email1' ||
+                lowerHeader.includes('alt') && lowerHeader.includes('email') && lowerHeader.includes('1') ||
+                lowerHeader === 'email2' ||
+                lowerHeader === 'secondaryemail'
+              ) {
+                assignField('altEmail1', header);
+              }
+              else if (
+                normalizedHeader === 'altemail2' ||
+                normalizedHeader === 'alt_email2' ||
+                lowerHeader.includes('alt') && lowerHeader.includes('email') && lowerHeader.includes('2') ||
+                lowerHeader === 'email3' ||
+                lowerHeader === 'tertiaryemail'
+              ) {
+                assignField('altEmail2', header);
+              }
+              else if (
+                normalizedHeader === 'altemail3' ||
+                normalizedHeader === 'alt_email3' ||
+                lowerHeader.includes('alt') && lowerHeader.includes('email') && lowerHeader.includes('3') ||
+                lowerHeader === 'email4' ||
+                lowerHeader === 'quaternaryemail'
+              ) {
+                assignField('altEmail3', header);
+              }
+              // Company matching
               else if (
                 normalizedHeader === 'company' ||
                 normalizedHeader === 'companyname' ||
@@ -339,9 +1464,9 @@ export default function LeadsImportPage() {
                 lowerHeader === 'employer' ||
                 lowerHeader === 'business'
               ) {
-                mapping.companyName = header;
+                assignField('companyName', header);
               }
-              // Enhanced matching for job title
+              // Job title matching
               else if (
                 normalizedHeader === 'title' ||
                 normalizedHeader === 'jobtitle' ||
@@ -352,9 +1477,9 @@ export default function LeadsImportPage() {
                 lowerHeader === 'designation' ||
                 lowerHeader === 'occupation'
               ) {
-                mapping.jobTitle = header;
+                assignField('jobTitle', header);
               }
-              // Enhanced matching for LinkedIn
+              // LinkedIn matching
               else if (
                 normalizedHeader === 'linkedin' ||
                 normalizedHeader === 'linkedinurl' ||
@@ -363,9 +1488,9 @@ export default function LeadsImportPage() {
                 lowerHeader === 'li_url' ||
                 lowerHeader === 'linkedinprofile'
               ) {
-                mapping.linkedinUrl = header;
+                assignField('linkedinUrl', header);
               }
-              // Enhanced matching for notes
+              // Notes matching
               else if (
                 normalizedHeader === 'notes' ||
                 normalizedHeader === 'note' ||
@@ -375,14 +1500,15 @@ export default function LeadsImportPage() {
                 lowerHeader === 'remarks' ||
                 lowerHeader === 'additionalinfo'
               ) {
-                mapping.notes = header;
+                assignField('notes', header);
               }
             });
             
             setFieldMapping(mapping);
           }, 100);
           
-          setCurrentStep('mapping');
+          // Stay on upload step - the CSVUploadAndSetup component will show the list selection
+          // after successful upload
         } catch (error) {
           setIsUploading(false);
           setUploadStatus('error');
@@ -390,7 +1516,7 @@ export default function LeadsImportPage() {
         }
       },
       error: (error) => {
-        console.error('Error parsing CSV:', error);
+        console.error('Papa.parse error:', error);
         setIsUploading(false);
         setUploadStatus('error');
         setErrorMessage('Error parsing CSV file. Please check the format and try again.');
@@ -398,114 +1524,6 @@ export default function LeadsImportPage() {
     });
   };
 
-  // Auto-map fields based on header names
-  const autoMapFields = () => {
-    const mapping: FieldMapping = {};
-    
-    csvHeaders.forEach(header => {
-      const lowerHeader = header.toLowerCase().trim();
-      const normalizedHeader = lowerHeader.replace(/[_\s-]/g, ''); // Remove spaces, underscores, dashes
-      
-      // Enhanced matching for firstName
-      if (
-        normalizedHeader === 'firstname' ||
-        normalizedHeader === 'first_name' ||
-        normalizedHeader === 'firstname' ||
-        lowerHeader.includes('first') && lowerHeader.includes('name') ||
-        lowerHeader === 'fname' ||
-        lowerHeader === 'givenname'
-      ) {
-        mapping.firstName = header;
-      }
-      // Enhanced matching for lastName
-      else if (
-        normalizedHeader === 'lastname' ||
-        normalizedHeader === 'last_name' ||
-        normalizedHeader === 'lastname' ||
-        lowerHeader.includes('last') && lowerHeader.includes('name') ||
-        lowerHeader === 'lname' ||
-        lowerHeader === 'surname' ||
-        lowerHeader === 'familyname'
-      ) {
-        mapping.lastName = header;
-      }
-      // Enhanced matching for email
-      else if (
-        normalizedHeader === 'email' ||
-        normalizedHeader === 'emailaddress' ||
-        lowerHeader.includes('email') ||
-        lowerHeader === 'e_mail' ||
-        lowerHeader === 'mail'
-      ) {
-        mapping.email = header;
-      }
-      // Enhanced matching for phone
-      else if (
-        normalizedHeader === 'phone' ||
-        normalizedHeader === 'phonenumber' ||
-        normalizedHeader === 'phone_number' ||
-        lowerHeader.includes('phone') ||
-        lowerHeader.includes('mobile') ||
-        lowerHeader.includes('cell') ||
-        lowerHeader === 'tel' ||
-        lowerHeader === 'telephone' ||
-        lowerHeader === 'contactnumber'
-      ) {
-        mapping.phone = header;
-      }
-      // Enhanced matching for company
-      else if (
-        normalizedHeader === 'company' ||
-        normalizedHeader === 'companyname' ||
-        normalizedHeader === 'company_name' ||
-        lowerHeader.includes('company') ||
-        lowerHeader === 'organization' ||
-        lowerHeader === 'org' ||
-        lowerHeader === 'employer' ||
-        lowerHeader === 'business'
-      ) {
-        mapping.companyName = header;
-      }
-      // Enhanced matching for job title
-      else if (
-        normalizedHeader === 'title' ||
-        normalizedHeader === 'jobtitle' ||
-        normalizedHeader === 'job_title' ||
-        lowerHeader.includes('title') ||
-        lowerHeader.includes('position') ||
-        lowerHeader === 'role' ||
-        lowerHeader === 'designation' ||
-        lowerHeader === 'occupation'
-      ) {
-        mapping.jobTitle = header;
-      }
-      // Enhanced matching for LinkedIn
-      else if (
-        normalizedHeader === 'linkedin' ||
-        normalizedHeader === 'linkedinurl' ||
-        normalizedHeader === 'linkedin_url' ||
-        lowerHeader.includes('linkedin') ||
-        lowerHeader === 'li_url' ||
-        lowerHeader === 'linkedinprofile'
-      ) {
-        mapping.linkedinUrl = header;
-      }
-      // Enhanced matching for notes
-      else if (
-        normalizedHeader === 'notes' ||
-        normalizedHeader === 'note' ||
-        lowerHeader.includes('note') ||
-        lowerHeader.includes('comment') ||
-        lowerHeader === 'description' ||
-        lowerHeader === 'remarks' ||
-        lowerHeader === 'additionalinfo'
-      ) {
-        mapping.notes = header;
-      }
-    });
-    
-    setFieldMapping(mapping);
-  };
 
   // Format phone number to ensure country code and proper format
   const formatPhoneNumber = (phone: string): string => {
@@ -618,11 +1636,27 @@ export default function LeadsImportPage() {
         }
         duplicates.add(duplicateKey);
 
+        // Process alternate phone numbers
+        const altPhone1 = fieldMapping.altPhone1 ? formatPhoneNumber(row[fieldMapping.altPhone1] || '') : undefined;
+        const altPhone2 = fieldMapping.altPhone2 ? formatPhoneNumber(row[fieldMapping.altPhone2] || '') : undefined;
+        const altPhone3 = fieldMapping.altPhone3 ? formatPhoneNumber(row[fieldMapping.altPhone3] || '') : undefined;
+        
+        // Process alternate emails
+        const altEmail1 = fieldMapping.altEmail1 ? formatEmail(row[fieldMapping.altEmail1] || '') : undefined;
+        const altEmail2 = fieldMapping.altEmail2 ? formatEmail(row[fieldMapping.altEmail2] || '') : undefined;
+        const altEmail3 = fieldMapping.altEmail3 ? formatEmail(row[fieldMapping.altEmail3] || '') : undefined;
+
         const lead: ProcessedLead = {
           firstName,
           lastName,
           email,
           phone,
+          altPhone1: altPhone1 || undefined,
+          altPhone2: altPhone2 || undefined,
+          altPhone3: altPhone3 || undefined,
+          altEmail1: altEmail1 || undefined,
+          altEmail2: altEmail2 || undefined,
+          altEmail3: altEmail3 || undefined,
           companyName: fieldMapping.companyName ? (row[fieldMapping.companyName] || '').trim() : undefined,
           jobTitle: fieldMapping.jobTitle ? (row[fieldMapping.jobTitle] || '').trim() : undefined,
           linkedinUrl: fieldMapping.linkedinUrl ? (row[fieldMapping.linkedinUrl] || '').trim() : undefined,
@@ -674,7 +1708,23 @@ export default function LeadsImportPage() {
     setIsSaving(true);
     setErrorMessage('');
     
+    // Validate that we have a listId
+    console.log('Current state values:', {
+      selectedListId,
+      listMode,
+      newListName,
+      currentStep,
+      processedLeadsLength: processedLeads.length
+    });
+    
+    if (!selectedListId) {
+      setErrorMessage('No list selected. Please go back and select or create a list.');
+      setIsSaving(false);
+      return;
+    }
+    
     try {
+      console.log('Saving leads with listId:', selectedListId);
       const response = await fetch('/api/leads', {
         method: 'POST',
         headers: {
@@ -683,7 +1733,7 @@ export default function LeadsImportPage() {
         body: JSON.stringify({ 
           leads: processedLeads,
           source: 'csv_import',
-          listId: selectedListId || undefined
+          listId: selectedListId
         }),
       });
 
@@ -707,6 +1757,58 @@ export default function LeadsImportPage() {
       setErrorMessage(`Error saving leads: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // Quick Send handler
+  const handleQuickSend = async (phoneOrEmail: string, message: string, sendNow: boolean, scheduledDate?: Date) => {
+    try {
+      // Get an active line
+      const linesResponse = await fetch('/api/lines');
+      if (!linesResponse.ok) {
+        throw new Error('Failed to fetch lines');
+      }
+      const linesData = await linesResponse.json();
+      const activeLine = linesData.lines.find((line: { isActive: boolean; provisioningStatus: string }) => line.isActive && line.provisioningStatus === 'active');
+      
+      if (!activeLine) {
+        alert('No active line found. Please create and activate a line first.');
+        return;
+      }
+
+      // Determine message type based on availability
+      let messageType = 'imessage'; // Default to iMessage
+      if (phoneOrEmail.includes('@')) {
+        messageType = 'email';
+      } else {
+        messageType = 'imessage';
+      }
+
+      // Send the message
+      const response = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          messageType,
+          fromLineId: activeLine._id,
+          recipientEmail: phoneOrEmail.includes('@') ? phoneOrEmail : undefined,
+          recipientPhone: !phoneOrEmail.includes('@') ? phoneOrEmail : undefined,
+          recipientName: phoneOrEmail,
+          scheduledDate: sendNow ? undefined : scheduledDate?.toISOString(),
+        }),
+      });
+
+      if (response.ok) {
+        alert(`Message ${sendNow ? 'sent' : 'scheduled'} successfully!`);
+        setCurrentStep('select');
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to send message');
+      }
+    } catch (error) {
+      console.error('Error sending quick message:', error);
+      alert(`Error sending message: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -782,7 +1884,8 @@ export default function LeadsImportPage() {
   const StepIndicator = () => {
     const steps = [
       { key: 'select', label: 'Choose Method', icon: FileText },
-      { key: 'upload', label: selectedOption === 'csv' ? 'Upload File' : 'Connect', icon: Upload },
+      { key: 'quickSend', label: 'Quick Send', icon: Zap },
+      { key: 'upload', label: selectedOption === 'csv' ? 'Upload & Setup' : 'Connect & Setup', icon: Upload },
       { key: 'mapping', label: 'Map Fields', icon: MapPin },
       { key: 'preview', label: 'Preview', icon: Eye },
       { key: 'confirm', label: 'Complete', icon: CheckCircle },
@@ -834,30 +1937,39 @@ export default function LeadsImportPage() {
             <h1 className="text-3xl font-bold text-gray-900">Import Leads</h1>
             <p className="text-gray-600 mt-2">Bring your leads into the system with our guided import process</p>
           </div>
-          <button 
-            onClick={async () => {
-              try {
-                const response = await fetch('/api/leads/export-template');
-                if (response.ok) {
-                  const blob = await response.blob();
-                  const url = window.URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = 'leads_template.csv';
-                  document.body.appendChild(a);
-                  a.click();
-                  window.URL.revokeObjectURL(url);
-                  document.body.removeChild(a);
-                }
-              } catch (error) {
-                console.error('Error downloading template:', error);
-              }
-            }}
-            className="flex items-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-              <Download className="w-4 h-4 mr-2" />
-            <span className="text-sm font-medium">Download Template</span>
+          <div className="flex items-center space-x-3">
+            <button 
+              onClick={() => setCurrentStep('quickSend')}
+              className="flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
+            >
+              <Zap className="w-4 h-4 mr-2" />
+              <span className="text-sm font-medium">Quick Send</span>
             </button>
+            <button 
+              onClick={async () => {
+                try {
+                  const response = await fetch('/api/leads/export-template');
+                  if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'leads_template.csv';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                  }
+                } catch (error) {
+                  console.error('Error downloading template:', error);
+                }
+              }}
+              className="flex items-center px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              <span className="text-sm font-medium">Download Template</span>
+            </button>
+          </div>
         </div>
 
         {/* Step Indicator */}
@@ -867,65 +1979,42 @@ export default function LeadsImportPage() {
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
           {/* Step 1: Select Import Method */}
           {currentStep === 'select' && (
-            <div className="p-8">
-              <div className="text-center mb-8">
-                <h2 className="text-2xl font-semibold text-gray-900 mb-2">Choose Import Method</h2>
-                <p className="text-gray-600">Select how you&apos;d like to import your leads</p>
-              </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {importOptions.map((option) => {
-            const Icon = option.icon;
-            
-            return (
-              <div
-                key={option.id}
-                      className="relative bg-white rounded-lg border-2 border-gray-200 hover:border-primary transition-all duration-200 cursor-pointer group"
-                onClick={() => handleOptionSelect(option.id)}
-              >
-                {option.premium && (
-                  <div className="absolute top-4 right-4">
-                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-primary text-white">
-                      Premium
-                    </span>
-                  </div>
-                )}
-                
-                <div className="p-6">
-                  <div className="flex items-start space-x-4">
-                          <div className={`w-12 h-12 ${option.bgColor} rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform duration-200`}>
-                      <Icon className={`w-6 h-6 ${option.color}`} />
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-1">{option.title}</h3>
-                            <p className="text-sm text-gray-600 mb-4">{option.description}</p>
-                      
-                      <ul className="space-y-2 mb-6">
-                        {option.features.map((feature, index) => (
-                                <li key={index} className="flex items-center text-sm text-gray-600">
-                            <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
-                            {feature}
-                          </li>
-                        ))}
-                      </ul>
-                      
-                            <div className="flex items-center text-primary font-medium">
-                              <span className="text-sm">{option.action}</span>
-                        <ArrowRight className="w-4 h-4 ml-2" />
-                            </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-            </div>
+            <ImportMethodSelector onSelect={handleOptionSelect} />
           )}
 
-          {/* Step 2: Upload File or Connect Integration */}
-          {currentStep === 'upload' && (
+          {/* Quick Send Step */}
+          {currentStep === 'quickSend' && (
+            <QuickSend
+              onBack={() => setCurrentStep('select')}
+              onSend={handleQuickSend}
+            />
+          )}
+
+          {/* Step 2: Upload CSV File & Setup */}
+          {(() => {
+            console.log('Rendering check - currentStep:', currentStep, 'selectedOption:', selectedOption);
+            return currentStep === 'upload' && selectedOption === 'csv';
+          })() && (
+            <CSVUploadAndSetup
+              onFileUpload={handleFileUpload}
+              isUploading={isUploading}
+              uploadStatus={uploadStatus}
+              errorMessage={errorMessage}
+              csvDataLength={csvData.length}
+              onBack={() => setCurrentStep('select')}
+              onContinue={handleCSVSetupContinue}
+              lists={lists}
+              selectedListId={selectedListId}
+              setSelectedListId={setSelectedListId}
+              listMode={listMode}
+              setListMode={setListMode}
+              newListName={newListName}
+              setNewListName={setNewListName}
+            />
+          )}
+
+          {/* Integration Connection Step */}
+          {currentStep === 'upload' && selectedOption !== 'csv' && (
             <div className="p-8">
               <div className="flex items-center mb-6">
                 <button
@@ -935,449 +2024,151 @@ export default function LeadsImportPage() {
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back
                 </button>
-        </div>
-
-              {selectedOption === 'csv' ? (
-                <div className="text-center">
-                  <h2 className="text-2xl font-semibold text-gray-900 mb-2">Upload CSV File</h2>
-                  <p className="text-gray-600 mb-8">Choose your CSV file to get started</p>
-                  
-                  <div className="border-2 border-dashed border-gray-300 rounded-xl p-12 text-center hover:border-primary transition-colors">
-                    <Upload className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                    <h3 className="text-lg font-medium text-gray-900 mb-2">Drop your CSV file here</h3>
-                    <p className="text-gray-600 mb-6">
-                      Or click to browse your computer
-              </p>
-              
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-              
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
-                      className="px-8 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors font-medium"
-              >
-                  {isUploading ? 'Uploading...' : 'Choose File'}
-              </button>
-
-              {uploadStatus === 'success' && (
-                <>
-                  <div className="mt-6 flex items-center justify-center text-green-600">
-                    <CheckCircle className="w-5 h-5 mr-2" />
-                    <span className="text-sm font-medium">
-                      File uploaded successfully! {csvData.length} records found.
-                    </span>
-                  </div>
-                  {/* List selection required */}
-                  <div className="mt-6 mx-auto max-w-md text-left">
-                    <label className="block text-sm font-medium text-gray-700 mb-3">Where should these leads go?</label>
-                    <div className="space-y-3">
-                      <label className="flex items-center space-x-3">
-                        <input type="radio" name="listMode" className="h-4 w-4" checked={listMode==='existing'} onChange={() => setListMode('existing')} />
-                        <span className="text-sm text-gray-800">Add to existing list</span>
-                      </label>
-                      {listMode==='existing' && (
-                        <select
-                          value={selectedListId}
-                          onChange={(e) => setSelectedListId(e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                        >
-                          <option value="">Select a list…</option>
-                          {lists.map((l) => (
-                            <option key={l._id} value={l._id}>{l.name}</option>
-                          ))}
-                        </select>
-                      )}
-
-                      <label className="flex items-center space-x-3 mt-2">
-                        <input type="radio" name="listMode" className="h-4 w-4" checked={listMode==='new'} onChange={() => setListMode('new')} />
-                        <span className="text-sm text-gray-800">Create a new list</span>
-                      </label>
-                      {listMode==='new' && (
-                        <input
-                          type="text"
-                          value={newListName}
-                          onChange={(e) => setNewListName(e.target.value)}
-                          placeholder="Enter new list name"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                        />
-                      )}
-                    </div>
-
-                    <div className="mt-6">
-                      <button
-                        onClick={async () => {
-                          // Require selection
-                          if (listMode==='existing') {
-                            if (!selectedListId) return;
-                            setCurrentStep('mapping');
-                            return;
-                          }
-                          if (!newListName.trim()) return;
-                          const res = await fetch('/api/lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newListName }) });
-                          if (res.ok) {
-                            const data = await res.json();
-                            setLists((prev) => [{ _id: data.list._id, name: data.list.name }, ...prev]);
-                            setSelectedListId(data.list._id);
-                            setNewListName('');
-                            setCurrentStep('mapping');
-                          }
-                        }}
-                        disabled={(listMode==='existing' && !selectedListId) || (listMode==='new' && !newListName.trim())}
-                        className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50"
-                      >
-                        Continue to Mapping
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {uploadStatus === 'error' && (
-                      <div className="mt-6 flex items-center justify-center text-red-600">
-                  <AlertCircle className="w-5 h-5 mr-2" />
-                        <span className="text-sm font-medium">{errorMessage}</span>
-                </div>
-              )}
-            </div>
-          </div>
-              ) : (
-                <div>
-                  <h2 className="text-2xl font-semibold text-gray-900 mb-2">
-              Connect {importOptions.find(opt => opt.id === selectedOption)?.title}
-            </h2>
-                  <p className="text-gray-600 mb-8">
-                    Follow the steps below to connect your {importOptions.find(opt => opt.id === selectedOption)?.title} account
-                  </p>
-
-                  {(selectedOption === 'hubspot' || selectedOption === 'salesforce') && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
-                      <div className="flex items-start">
-                        <div className="flex-shrink-0">
-                          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                            <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                          </div>
-                        </div>
-                        <div className="ml-3">
-                          <h3 className="text-sm font-medium text-blue-800">
-                            OAuth Authentication
-                          </h3>
-                          <div className="mt-2 text-sm text-blue-700">
-                            <p>
-                              {selectedOption === 'hubspot' 
-                                ? 'We\'ll redirect you to HubSpot to authorize access to your contacts. This is the most secure way to connect your account.'
-                                : 'We\'ll redirect you to Salesforce to authorize access to your leads. This is the most secure way to connect your account.'
-                              }
-                            </p>
-                          </div>
-                        </div>
-                      </div>
               </div>
-                  )}
 
-                  {selectedOption === 'google-sheets' && (
-              <div className="space-y-4">
-                <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Access Token
-                  </label>
-                  <input
-                    type="password"
-                          value={integrationCredentials.accessToken}
-                          onChange={(e) => setIntegrationCredentials(prev => ({ ...prev, accessToken: e.target.value }))}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                          placeholder="Enter your Google API access token"
-                        />
+              <div>
+                <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+                  Connect {importOptions.find(opt => opt.id === selectedOption)?.title}
+                </h2>
+                <p className="text-gray-600 mb-8">
+                  Follow the steps below to connect your {importOptions.find(opt => opt.id === selectedOption)?.title} account
+                </p>
+
+                {(selectedOption === 'hubspot' || selectedOption === 'salesforce') && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
+                    <div className="flex items-start">
+                      <div className="flex-shrink-0">
+                        <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                          <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </div>
                       </div>
-                      
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Spreadsheet ID
-                        </label>
-                        <input
-                          type="text"
-                          value={integrationCredentials.accountId}
-                          onChange={(e) => setIntegrationCredentials(prev => ({ ...prev, accountId: e.target.value }))}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                          placeholder="Enter your Google Sheets spreadsheet ID"
-                  />
-                </div>
-                
-                <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Sheet Name (optional)
-                  </label>
-                  <input
-                    type="text"
-                          value={integrationCredentials.workspaceId}
-                          onChange={(e) => setIntegrationCredentials(prev => ({ ...prev, workspaceId: e.target.value }))}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                          placeholder="Sheet1 (default)"
-                        />
+                      <div className="ml-3">
+                        <h3 className="text-sm font-medium text-blue-800">
+                          OAuth Authentication
+                        </h3>
+                        <div className="mt-2 text-sm text-blue-700">
+                          <p>
+                            {selectedOption === 'hubspot' 
+                              ? 'We\'ll redirect you to HubSpot to authorize access to your contacts. This is the most secure way to connect your account.'
+                              : 'We\'ll redirect you to Salesforce to authorize access to your leads. This is the most secure way to connect your account.'
+                            }
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  )}
-
-                  {connectionStatus === 'error' && (
-                    <div className="mt-4 flex items-center text-red-600">
-                      <AlertCircle className="w-5 h-5 mr-2" />
-                      <span className="text-sm">{errorMessage}</span>
-                    </div>
-                  )}
-
-                  <div className="flex space-x-3 mt-8">
-                    <button 
-                      onClick={handleIntegrationConnect}
-                      disabled={isConnecting}
-                      className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors font-medium"
-                    >
-                      {isConnecting 
-                        ? 'Connecting...' 
-                        : (selectedOption === 'hubspot' || selectedOption === 'salesforce') 
-                          ? 'Authorize & Import' 
-                          : 'Connect & Import'
-                      }
-                    </button>
-                    <button 
-                      onClick={() => setCurrentStep('select')}
-                      className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                    >
-                      Cancel
-                    </button>
                   </div>
+                )}
+
+                {selectedOption === 'google-sheets' && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Access Token
+                      </label>
+                      <input
+                        type="password"
+                        value={integrationCredentials.accessToken}
+                        onChange={(e) => setIntegrationCredentials(prev => ({ ...prev, accessToken: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                        placeholder="Enter your Google API access token"
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Spreadsheet ID
+                      </label>
+                      <input
+                        type="text"
+                        value={integrationCredentials.accountId}
+                        onChange={(e) => setIntegrationCredentials(prev => ({ ...prev, accountId: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                        placeholder="Enter your Google Sheets spreadsheet ID"
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Sheet Name (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={integrationCredentials.workspaceId}
+                        onChange={(e) => setIntegrationCredentials(prev => ({ ...prev, workspaceId: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                        placeholder="Sheet1 (default)"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {connectionStatus === 'error' && (
+                  <div className="mt-4 flex items-center text-red-600">
+                    <AlertCircle className="w-5 h-5 mr-2" />
+                    <span className="text-sm">{errorMessage}</span>
+                  </div>
+                )}
+
+                <div className="flex space-x-3 mt-8">
+                  <button 
+                    onClick={handleIntegrationConnect}
+                    disabled={isConnecting}
+                    className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors font-medium"
+                  >
+                    {isConnecting 
+                      ? 'Connecting...' 
+                      : (selectedOption === 'hubspot' || selectedOption === 'salesforce') 
+                        ? 'Authorize & Import' 
+                        : 'Connect & Import'
+                    }
+                  </button>
+                  <button 
+                    onClick={() => setCurrentStep('select')}
+                    className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                  >
+                    Cancel
+                  </button>
                 </div>
-              )}
+              </div>
             </div>
           )}
 
           {/* Step 3: Field Mapping */}
           {currentStep === 'mapping' && (
-            <div className="p-8">
-              <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h2 className="text-2xl font-semibold text-gray-900 mb-2">Map CSV Columns</h2>
-                  <p className="text-gray-600">Match your CSV columns to our lead fields</p>
-                </div>
-                <button
-                  onClick={autoMapFields}
-                  className="px-4 py-2 text-sm font-medium text-primary hover:text-primary/80 transition-colors"
-                >
-                  Auto-map Fields
-                </button>
-              </div>
-
-
-              <div className="space-y-6">
-                {requiredFields.map((field) => {
-                  const selectedColumn = fieldMapping[field.key];
-                  const sampleValue = selectedColumn ? csvData[0]?.[selectedColumn] : null;
-                  
-                  return (
-                    <div key={field.key} className="space-y-2">
-                      <div className="flex items-center space-x-4">
-                        <div className="w-32">
-                          <label className="block text-sm font-medium text-gray-900">
-                            {field.label}
-                            {field.required && <span className="text-red-500 ml-1">*</span>}
-                          </label>
-                        </div>
-                        <div className="flex-1">
-                          <select
-                            value={fieldMapping[field.key] || ''}
-                            onChange={(e) => setFieldMapping(prev => ({ ...prev, [field.key]: e.target.value }))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                          >
-                            <option value="">Select column...</option>
-                            {csvHeaders.map((header) => (
-                              <option key={header} value={header}>
-                                {header}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                      
-                      {/* Show sample data for selected column */}
-                      {selectedColumn && sampleValue && (
-                        <div className="ml-36">
-                          <span className="text-xs text-gray-500">Sample: </span>
-                          <span className="text-xs text-gray-700">
-                            {field.key === 'phone' ? formatPhoneNumber(sampleValue) : 
-                             field.key === 'email' ? formatEmail(sampleValue) : 
-                             sampleValue}
-                          </span>
-                        </div>
-                      )}
-                      
-                      {/* Show formatting info */}
-                      {field.key === 'phone' && selectedColumn && (
-                        <div className="ml-36">
-                          <span className="text-xs text-gray-500">Note: Phone numbers will be automatically formatted with country codes</span>
-                        </div>
-                      )}
-                      {field.key === 'email' && selectedColumn && (
-                        <div className="ml-36">
-                          <span className="text-xs text-gray-500">Note: Emails will be automatically cleaned and converted to lowercase</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="flex justify-between mt-8">
-                <button
-                  onClick={() => setCurrentStep('upload')}
-                  className="flex items-center px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                >
-                  <ChevronLeft className="w-4 h-4 mr-2" />
-                  Back
-                </button>
-                <button 
-                  onClick={processLeads}
-                  disabled={!fieldMapping.firstName || !fieldMapping.lastName || !fieldMapping.email || !fieldMapping.phone || isProcessing}
-                  className="flex items-center px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors font-medium"
-                >
-                  {isProcessing ? 'Processing...' : 'Continue'}
-                  <ChevronRight className="w-4 h-4 ml-2" />
-                </button>
-            </div>
-          </div>
-        )}
+            <FieldMapper
+              csvHeaders={csvHeaders}
+              fieldMapping={fieldMapping}
+              setFieldMapping={setFieldMapping}
+              csvData={csvData}
+              onBack={() => setCurrentStep('upload')}
+              onContinue={processLeads}
+              isProcessing={isProcessing}
+            />
+          )}
 
           {/* Step 4: Preview */}
           {currentStep === 'preview' && (
-            <div className="p-8">
-              <div className="mb-6">
-                <h2 className="text-2xl font-semibold text-gray-900 mb-2">Preview Your Data</h2>
-                <p className="text-gray-600">
-                  Review {processedLeads.length} leads before importing
-                </p>
-              </div>
-
-              <div className="bg-gray-50 rounded-lg p-4 mb-6">
-                <div className="grid grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <span className="font-medium text-gray-700">Total Records:</span>
-                    <span className="ml-2 text-gray-900">{csvData.length}</span>
-                  </div>
-                  <div>
-                    <span className="font-medium text-gray-700">Valid Leads:</span>
-                    <span className="ml-2 text-green-600">{processedLeads.length}</span>
-                  </div>
-                  <div>
-                    <span className="font-medium text-gray-700">Invalid Records:</span>
-                    <span className="ml-2 text-red-600">{csvData.length - processedLeads.length}</span>
-              </div>
-              <div>
-                    <span className="font-medium text-gray-700">File:</span>
-                    <span className="ml-2 text-gray-900">{fileName}</span>
-                  </div>
-              </div>
-            </div>
-
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Name
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Email
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Phone
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Company
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {processedLeads.slice(0, 10).map((lead, index) => (
-                      <tr key={index}>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {lead.firstName} {lead.lastName}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {lead.email}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {lead.phone}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {lead.companyName || '-'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {processedLeads.length > 10 && (
-                <p className="text-gray-500 text-sm mt-4 text-center">
-                  Showing first 10 of {processedLeads.length} records
-                </p>
-              )}
-
-              <div className="flex justify-between mt-8">
-                <button
-                  onClick={() => setCurrentStep('mapping')}
-                  className="flex items-center px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                >
-                  <ChevronLeft className="w-4 h-4 mr-2" />
-                  Back
-                </button>
-                <button
-                  onClick={handleSaveLeads}
-                  disabled={processedLeads.length === 0 || isSaving}
-                  className="flex items-center px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors font-medium"
-                >
-                  {isSaving ? 'Importing...' : `Import ${processedLeads.length} Leads`}
-                  <Save className="w-4 h-4 ml-2" />
-                </button>
-              </div>
-            </div>
+            <DataPreview
+              processedLeads={processedLeads}
+              csvData={csvData}
+              fileName={fileName}
+              onBack={() => setCurrentStep('mapping')}
+              onImport={handleSaveLeads}
+              isSaving={isSaving}
+            />
           )}
 
           {/* Step 5: Complete */}
           {currentStep === 'complete' && (
-            <div className="p-8 text-center">
-              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                <CheckCircle className="w-8 h-8 text-green-600" />
-              </div>
-              
-              <h2 className="text-2xl font-semibold text-gray-900 mb-2">Import Complete</h2>
-              <div className="mx-auto max-w-md bg-gray-50 rounded-lg p-4 text-left">
-                <div className="flex justify-between py-2"><span className="text-gray-600">File</span><span className="text-gray-900">{fileName}</span></div>
-                <div className="flex justify-between py-2"><span className="text-gray-600">Saved</span><span className="text-green-700 font-medium">{importSummary?.savedCount ?? processedLeads.length}</span></div>
-                <div className="flex justify-between py-2"><span className="text-gray-600">Invalid</span><span className="text-red-600">{importSummary?.invalidCount ?? 0}</span></div>
-                <div className="flex justify-between py-2"><span className="text-gray-600">List</span><span className="text-gray-900">{importSummary?.listName || 'CSV Import'}</span></div>
-              </div>
-
-              <div className="flex justify-center space-x-4 mt-8">
-                <button
-                  onClick={() => window.location.href = '/leads'}
-                  className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium"
-                >
-                  View Leads
-                </button>
-                <button
-                  onClick={resetImport}
-                  className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                >
-                  Import More
-                </button>
-              </div>
-            </div>
+            <ImportComplete
+              importSummary={importSummary}
+              fileName={fileName}
+              processedLeads={processedLeads}
+              onViewLeads={() => window.location.href = '/leads'}
+              onImportMore={resetImport}
+            />
           )}
         </div>
       </div>

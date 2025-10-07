@@ -2,11 +2,11 @@ import { NextResponse } from 'next/server';
 
 export async function GET() {
   try {
-    // Create CSV template with mandatory fields and sample custom fields
+    // Create CSV template with mandatory fields, alternate contact fields, and sample custom fields
     const csvTemplate = [
-      'firstName,lastName,email,phone,companyName,jobTitle,linkedinUrl,notes,customField1,customField2',
-      'John,Doe,john.doe@example.com,+15550123,Acme Corp,Software Engineer,https://linkedin.com/in/johndoe,Interested in our product,Value1,Value2',
-      'Jane,Smith,jane.smith@example.com,+15550124,Tech Solutions,Product Manager,https://linkedin.com/in/janesmith,Referred by John,Value3,Value4'
+      'firstName,lastName,email,phone,altPhone1,altPhone2,altPhone3,altEmail1,altEmail2,altEmail3,companyName,jobTitle,linkedinUrl,notes,customField1,customField2',
+      'Bharadwaj,Giridhar,goforbg@gmail.com,+919042956129,+15550124,+15550125,,john.alt@example.com,john.work@example.com,,Acme Corp,Software Engineer,https://linkedin.com/in/johndoe,Interested in our product,Value1,Value2',
+      'Jane,Smith,jane.smith@example.com,+15550124,+15550125,,,jane.alt@example.com,,,Tech Solutions,Product Manager,https://linkedin.com/in/janesmith,Referred by John,Value3,Value4'
     ].join('\n');
 
     // Set headers for CSV download

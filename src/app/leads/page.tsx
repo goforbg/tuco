@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Upload, Download, MapPin, Users, FileText, CheckCircle, AlertCircle, Plus, Search, X, Save, Trash2, ChevronLeft, ChevronRight, Info } from 'lucide-react';
+import { Upload, Download, MapPin, Users, FileText, AlertCircle, Plus, Search, X, Save, Trash2, ChevronLeft, ChevronRight, Info, Zap } from 'lucide-react';
 import { useOrganization } from '@clerk/nextjs';
-import Papa from 'papaparse';
+import { toast } from 'sonner';
+// import Papa from 'papaparse';
 import DashboardLayout from '@/components/DashboardLayout';
 
 interface LeadData {
@@ -25,6 +26,9 @@ interface LeadData {
   source: 'csv' | 'google_sheets' | 'salesforce' | 'hubspot' | 'manual';
   createdAt: string;
   listId?: string;
+  // iMessage availability status
+  availabilityStatus?: 'checking' | 'available' | 'unavailable' | 'error' | 'no_active_line';
+  availabilityCheckedAt?: string;
 }
 
 interface ListData {
@@ -33,6 +37,16 @@ interface ListData {
   description?: string;
   leadCount: number;
   createdAt: string;
+}
+
+interface LineData {
+  _id: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  email: string;
+  isActive: boolean;
+  provisioningStatus: 'provisioning' | 'active' | 'failed';
 }
 
 interface FieldMapping {
@@ -61,8 +75,8 @@ export default function LeadsPage() {
   const [csvData, setCsvData] = useState<Record<string, string>[]>([]);
   const [fieldMapping, setFieldMapping] = useState<FieldMapping>(defaultFieldMapping);
   const [mappedData, setMappedData] = useState<LeadData[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  // const [isUploading, setIsUploading] = useState(false);
+  // const [uploadStatus, setUploadStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [leads, setLeads] = useState<LeadData[]>([]);
   const [lists, setLists] = useState<ListData[]>([]);
   const [selectedList, setSelectedList] = useState<string>('');
@@ -82,9 +96,23 @@ export default function LeadsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { organization } = useOrganization();
 
+  // Message sending state
+  const [showMessageModal, setShowMessageModal] = useState(false);
+  const [selectedLeadForMessage, setSelectedLeadForMessage] = useState<LeadData | null>(null);
+  const [lines, setLines] = useState<LineData[]>([]);
+  const [selectedLineId, setSelectedLineId] = useState<string>('');
+  const [messageText, setMessageText] = useState('');
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  
+  // Scheduling state
+  const [sendImmediately, setSendImmediately] = useState(true);
+  const [scheduledDate, setScheduledDate] = useState('');
+  const [scheduledTime, setScheduledTime] = useState('');
+
   // Load existing leads and lists on component mount
   useEffect(() => {
     loadLeadsAndLists();
+    loadLines();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, selectedList]);
 
@@ -147,6 +175,292 @@ export default function LeadsPage() {
     }
   };
 
+  const loadLines = async () => {
+    try {
+      const response = await fetch('/api/lines');
+      if (response.ok) {
+        const data = await response.json();
+        setLines(data.lines || []);
+        // Set default selected line if none selected and lines are available
+        if (!selectedLineId && data.lines && data.lines.length > 0) {
+          const activeLine = data.lines.find((line: LineData) => line.isActive && line.provisioningStatus === 'active');
+          if (activeLine) {
+            setSelectedLineId(activeLine._id);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error loading lines:', error);
+    }
+  };
+
+  // const checkAvailabilityStatus = async (leadIds?: string[]) => {
+  //   try {
+  //     const response = await fetch('/api/leads/check-availability', {
+  //       method: 'POST',
+  //       headers: { 'Content-Type': 'application/json' },
+  //       body: JSON.stringify({ 
+  //         leadIds: leadIds || filteredLeads.map(lead => lead._id).filter(Boolean),
+  //       }),
+  //     });
+  //     
+  //     if (response.ok) {
+  //       const data = await response.json();
+  //       toast.success(`Availability checked for ${data.checked} leads`);
+  //       // Reload leads to get updated status
+  //       await loadLeadsAndLists();
+  //     } else {
+  //       const errorData = await response.json();
+  //       
+  //       // Handle specific error cases with clear messages
+  //       if (errorData.error === 'NO_ACTIVE_LINE') {
+  //         toast.error('No Active Line Found', {
+  //           description: 'You need to create and activate a line in the Lines page before checking availability.',
+  //           action: {
+  //             label: 'Go to Lines',
+  //             onClick: () => window.open('/lines', '_blank')
+  //           }
+  //         });
+  //       } else {
+  //         toast.error('Availability Check Failed', {
+  //           description: errorData.message || errorData.error || 'Failed to check availability. Please try again.'
+  //         });
+  //       }
+  //     }
+  //   } catch (error) {
+  //     console.error('Error checking availability status:', error);
+  //     toast.error('Error checking availability status');
+  //   }
+  // };
+
+  // Function to get or create "quick-sends" list
+  const getOrCreateQuickSendsList = async () => {
+    try {
+      // First try to find existing "quick-sends" list
+      const existingList = lists.find(list => list.name.toLowerCase() === 'quick-sends');
+      if (existingList) {
+        return existingList._id;
+      }
+
+      // Create new "quick-sends" list if it doesn't exist
+      const response = await fetch('/api/lists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Quick Sends', description: 'Quick send messages' }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setLists(prev => [data.list, ...prev]);
+        return data.list._id;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error creating quick-sends list:', error);
+      return null;
+    }
+  };
+
+  // Validation functions
+  const isValidEmail = (email: string) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const isValidPhone = (phone: string) => {
+    const phoneRegex = /^\+?[1-9]\d{1,14}$/;
+    return phoneRegex.test(phone.replace(/\s/g, ''));
+  };
+
+  // Function to check availability for Quick Send
+  const checkQuickSendAvailability = async () => {
+    if (selectedLeadForMessage?._id !== 'quick-send') return;
+    
+    const { phone, email } = selectedLeadForMessage;
+    
+    // Validate that we have at least one valid contact method
+    if (!phone && !email) {
+      toast.error('Please enter either a phone number or email address');
+      return;
+    }
+
+    if (phone && !isValidPhone(phone)) {
+      toast.error('Please enter a valid phone number (e.g., +1234567890)');
+      return;
+    }
+
+    if (email && !isValidEmail(email)) {
+      toast.error('Please enter a valid email address');
+      return;
+    }
+
+    const address = phone || email;
+    if (!address) return;
+
+    try {
+      setSelectedLeadForMessage(prev => prev ? { ...prev, availabilityStatus: 'checking' } : null);
+      
+      const response = await fetch('/api/leads/check-availability', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSelectedLeadForMessage(prev => prev ? { 
+          ...prev, 
+          availabilityStatus: data.available ? 'available' : 'unavailable' 
+        } : null);
+        
+        if (data.available) {
+          toast.success('iMessage is available for this contact!');
+        } else {
+          toast.info('iMessage not available, will send as SMS/Email');
+        }
+      } else {
+        setSelectedLeadForMessage(prev => prev ? { ...prev, availabilityStatus: 'error' } : null);
+        toast.error('Failed to check availability');
+      }
+    } catch (error) {
+      console.error('Error checking availability:', error);
+      setSelectedLeadForMessage(prev => prev ? { ...prev, availabilityStatus: 'error' } : null);
+      toast.error('Error checking availability');
+    }
+  };
+
+  const sendMessage = async () => {
+    if (!selectedLeadForMessage || !selectedLineId || !messageText.trim()) {
+      return;
+    }
+
+    try {
+      setIsSendingMessage(true);
+      
+      // Handle Quick Send vs Regular Lead
+      const isQuickSend = selectedLeadForMessage._id === 'quick-send';
+      
+      let messageType = 'imessage'; // Default
+      let recipientEmail = '';
+      let recipientPhone = '';
+      let recipientName = '';
+      
+      if (isQuickSend) {
+        // Quick Send logic - check availability first
+        if (selectedLeadForMessage.availabilityStatus !== 'available' && selectedLeadForMessage.availabilityStatus !== 'unavailable') {
+          toast.error('Please check availability before sending');
+          return;
+        }
+
+        // Only allow sending if iMessage is available
+        if (selectedLeadForMessage.availabilityStatus !== 'available') {
+          toast.error('Cannot send message - iMessage is not available for this contact');
+          return;
+        }
+
+        // Get or create quick-sends list
+        const quickSendsListId = await getOrCreateQuickSendsList();
+        if (!quickSendsListId) {
+          toast.error('Failed to create quick-sends list');
+          return;
+        }
+
+        // Determine message type and recipient
+        if (selectedLeadForMessage.email) {
+          messageType = 'email';
+          recipientEmail = selectedLeadForMessage.email;
+        } else if (selectedLeadForMessage.phone) {
+          messageType = 'imessage';
+          recipientPhone = selectedLeadForMessage.phone;
+        }
+        
+        recipientName = `${selectedLeadForMessage.firstName} ${selectedLeadForMessage.lastName}`.trim() || 
+                      selectedLeadForMessage.email || selectedLeadForMessage.phone;
+      } else {
+        // Regular lead logic - ONLY send if iMessage is available
+        if (selectedLeadForMessage.availabilityStatus !== 'available') {
+          toast.error('Cannot send message - this lead does not have iMessage available');
+          return;
+        }
+
+        messageType = 'imessage'; // Always iMessage for regular leads since we check availability
+        recipientEmail = selectedLeadForMessage.email;
+        recipientPhone = selectedLeadForMessage.phone;
+        recipientName = `${selectedLeadForMessage.firstName} ${selectedLeadForMessage.lastName}`;
+      }
+      
+      // Prepare request body
+      const requestBody: Record<string, unknown> = {
+        message: messageText,
+        messageType,
+        fromLineId: selectedLineId,
+        recipientEmail: recipientEmail || undefined,
+        recipientPhone: recipientPhone || undefined,
+        recipientName,
+      };
+
+      // Add leadId only for regular leads
+      if (!isQuickSend) {
+        requestBody.leadId = selectedLeadForMessage._id;
+      }
+
+      // Add scheduling if not sending immediately
+      if (!sendImmediately && scheduledDate && scheduledTime) {
+        const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
+        if (scheduledDateTime > new Date()) {
+          requestBody.scheduledDate = scheduledDateTime.toISOString();
+        }
+      }
+      
+      const response = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (response.ok) {
+        // const data = await response.json();
+        const successMessage = sendImmediately || !requestBody.scheduledDate 
+          ? 'Message sent successfully!' 
+          : `Message scheduled for ${new Date(requestBody.scheduledDate as string).toLocaleString()}!`;
+        toast.success(successMessage);
+        setShowMessageModal(false);
+        setSelectedLeadForMessage(null);
+        setMessageText('');
+        setSendImmediately(true);
+        setScheduledDate('');
+        setScheduledTime('');
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to send message');
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Please try again.';
+      
+      // Show specific toast based on error type
+      if (errorMessage.includes('Line is not active')) {
+        toast.error('Line Not Active', {
+          description: 'The selected line is not active or ready for sending messages. Please select an active line.',
+        });
+      } else if (errorMessage.includes('Line not found')) {
+        toast.error('Line Not Found', {
+          description: 'The selected line could not be found. Please select a different line.',
+        });
+      } else if (errorMessage.includes('HTTP')) {
+        toast.error('Server Error', {
+          description: `Failed to send message: ${errorMessage}`,
+        });
+      } else {
+        toast.error('Message Failed', {
+          description: errorMessage,
+        });
+      }
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+
   const handleExportTemplate = async () => {
     try {
       const response = await fetch('/api/leads/export-template');
@@ -184,6 +498,7 @@ export default function LeadsPage() {
       if (response.ok) {
         const data = await response.json();
         setLists(prev => [data.list, ...prev]);
+        setSelectedList(data.list._id); // Auto-select the newly created list
         setNewListName('');
         setNewListDescription('');
         setShowCreateList(false);
@@ -193,27 +508,27 @@ export default function LeadsPage() {
     }
   };
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  // const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  //   const file = event.target.files?.[0];
+  //   if (!file) return;
 
-    setIsUploading(true);
-    setUploadStatus('idle');
+  //   setIsUploading(true);
+  //   setUploadStatus('idle');
 
-    Papa.parse(file, {
-      header: true,
-      complete: (results) => {
-        setCsvData(results.data as Record<string, string>[]);
-        setIsUploading(false);
-        setUploadStatus('success');
-      },
-      error: (error) => {
-        console.error('Error parsing CSV:', error);
-        setIsUploading(false);
-        setUploadStatus('error');
-      },
-    });
-  };
+  //   Papa.parse(file, {
+  //     header: true,
+  //     complete: (results) => {
+  //       setCsvData(results.data as Record<string, string>[]);
+  //       setIsUploading(false);
+  //       setUploadStatus('success');
+  //     },
+  //     error: (error) => {
+  //       console.error('Error parsing CSV:', error);
+  //       setIsUploading(false);
+  //       setUploadStatus('error');
+  //     },
+  //   });
+  // };
 
   const handleFieldMapping = () => {
     if (csvData.length === 0) return;
@@ -253,6 +568,13 @@ export default function LeadsPage() {
   };
 
   const handleSaveLeads = async () => {
+    if (!selectedList) {
+      toast.error('List Required', {
+        description: 'Please select an existing list or create a new list before saving leads.',
+      });
+      return;
+    }
+
     try {
       const response = await fetch('/api/leads', {
         method: 'POST',
@@ -261,7 +583,7 @@ export default function LeadsPage() {
         },
         body: JSON.stringify({ 
           leads: mappedData,
-          listId: selectedList || undefined,
+          listId: selectedList,
           source: 'csv'
         }),
       });
@@ -397,6 +719,23 @@ export default function LeadsPage() {
     return Object.keys(csvData[0]);
   };
 
+  const getAvailabilityDot = (lead: LeadData) => {
+    switch (lead.availabilityStatus) {
+      case 'checking':
+        return <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" title="Checking availability..." />;
+      case 'available':
+        return <div className="w-2 h-2 bg-blue-500 rounded-full" title="iMessage available" />;
+      case 'unavailable':
+        return <div className="w-2 h-2 bg-gray-400 rounded-full" title="iMessage not available" />;
+      case 'error':
+        return <div className="w-2 h-2 bg-red-500 rounded-full" title="Error checking availability" />;
+      case 'no_active_line':
+        return <div className="w-2 h-2 bg-red-600 rounded-full" title="Unable to check without an active line" />;
+      default:
+        return <div className="w-2 h-2 bg-gray-300 rounded-full" title="Availability not checked" />;
+    }
+  };
+
   const filteredLeads = leads.filter(lead => {
     const matchesSearch = searchTerm === '' || 
       lead.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -478,15 +817,30 @@ export default function LeadsPage() {
                 onClick={handleDeleteSelected}
                 className="flex items-center px-3 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
               >
-                <Trash2 className="w-4 h-4 mr-1" /> Delete ({selectedIds.length})
+                <Trash2 className="w-4 h-4 mr-1" />
               </button>
             )}
             <button
-              onClick={() => setShowCreateList(true)}
+              onClick={() => {
+                // Set up Quick Send state
+                setSelectedLeadForMessage({
+                  _id: 'quick-send',
+                  firstName: '',
+                  lastName: '',
+                  email: '',
+                  phone: '',
+                  source: 'manual',
+                  createdAt: new Date().toISOString(),
+                  availabilityStatus: 'checking'
+                });
+                setMessageText('');
+                setSendImmediately(true);
+                setShowMessageModal(true);
+              }}
               className="flex shrink-0 items-center px-3 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors cursor-pointer"
             >
-              <Plus className="w-4 h-4 mr-1" />
-              <span className="text-body-small font-body-small">New List</span>
+              <Zap className="w-4 h-4 mr-1" />
+              <span className="text-body-small font-body-small">Quick Send</span>
             </button>
           </div>
         </div>
@@ -553,10 +907,10 @@ export default function LeadsPage() {
                     Phone
                   </th>
                   <th className="px-6 py-3 text-left text-body-small font-body-small text-gray-500 uppercase tracking-wider">
-                    Company
+                    iMessage
                   </th>
                   <th className="px-6 py-3 text-left text-body-small font-body-small text-gray-500 uppercase tracking-wider">
-                    List
+                    Company
                   </th>
                   <th className="px-6 py-3 text-left text-body-small font-body-small text-gray-500 uppercase tracking-wider">
                     Created
@@ -577,23 +931,42 @@ export default function LeadsPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500 cursor-pointer" onClick={() => setSidebarLead(lead)}>
                       {lead.phone}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500 cursor-pointer" onClick={() => setSidebarLead(lead)}>
-                      {lead.companyName || '-'}
+                    <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500">
+                      {getAvailabilityDot(lead)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500 cursor-pointer" onClick={() => setSidebarLead(lead)}>
-                      {listIdToName(lead.listId)}
+                      {lead.companyName || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500 cursor-pointer" onClick={() => setSidebarLead(lead)}>
                       {formatDate(lead.createdAt)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-body-small text-gray-500 space-x-2">
-                      <a href={`sms:${lead.phone}`} className="px-3 py-1 border border-gray-300 rounded-lg hover:bg-gray-50">Send</a>
+                      <button 
+                        onClick={() => {
+                          setSelectedLeadForMessage(lead);
+                          setShowMessageModal(true);
+                        }}
+                        disabled={lead.availabilityStatus !== 'available'}
+                        className="px-3 py-1 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Send
+                      </button>
                       <span className="relative inline-block">
                         <button onClick={() => setOpenMenuId(openMenuId === lead._id ? null : (lead._id || null))} className="px-2 py-1 border border-gray-300 rounded-lg hover:bg-gray-50">•••</button>
                         {openMenuId === lead._id && (
                           <div className="absolute right-0 mt-2 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20 text-left">
                             <button onClick={() => { setSidebarLead(lead); setOpenMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-gray-50">Edit</button>
-                            <a href={`sms:${lead.phone}`} className="block px-3 py-2 hover:bg-gray-50">Send iMessage</a>
+                            <button 
+                              onClick={() => {
+                                setSelectedLeadForMessage(lead);
+                                setShowMessageModal(true);
+                                setOpenMenuId(null);
+                              }} 
+                              disabled={lead.availabilityStatus !== 'available'}
+                              className="w-full text-left px-3 py-2 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Send Message
+                            </button>
                             <button onClick={() => { deleteSingleLead(lead._id); setOpenMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-gray-50 text-red-600">Delete</button>
                           </div>
                         )}
@@ -632,51 +1005,6 @@ export default function LeadsPage() {
         )}
       </div>
 
-      {/* Upload Section - show only when no leads */}
-      {(!isLoading && leads.length === 0) && (
-      <div className="tuco-section p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Upload CSV File</h2>
-        
-        <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-          <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Upload your CSV file</h3>
-          <p className="text-gray-600 mb-4">
-            Drag and drop your CSV file here, or click to browse
-          </p>
-          
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv"
-            onChange={handleFileUpload}
-            className="hidden"
-          />
-          
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-            className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors cursor-pointer disabled:cursor-not-allowed"
-          >
-            {isUploading ? 'Uploading...' : 'Choose File'}
-          </button>
-
-          {uploadStatus === 'success' && (
-            <div className="mt-4 flex items-center justify-center text-green-600">
-              <CheckCircle className="w-5 h-5 mr-2" />
-              File uploaded successfully! {csvData.length} records found.
-            </div>
-          )}
-
-          {uploadStatus === 'error' && (
-            <div className="mt-4 flex items-center justify-center text-red-600">
-              <AlertCircle className="w-5 h-5 mr-2" />
-              Error uploading file. Please try again.
-            </div>
-          )}
-        </div>
-      </div>
-      )}
-
       {/* Field Mapping */}
       {csvData.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
@@ -705,6 +1033,96 @@ export default function LeadsPage() {
                 </select>
               </div>
             ))}
+          </div>
+
+          {/* List Selection */}
+          <div className="mt-6 border-t border-gray-200 pt-6">
+            <h3 className="text-md font-medium text-gray-900 mb-4">Select List</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Choose which list to add these leads to, or create a new list.
+            </p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  Existing List
+                </label>
+                <select
+                  value={selectedList}
+                  onChange={(e) => setSelectedList(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                >
+                  <option value="">Select a list...</option>
+                  {lists.map((list) => (
+                    <option key={list._id} value={list._id}>
+                      {list.name} ({list.leadCount || 0} leads)
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  Or Create New List
+                </label>
+                {showCreateList ? (
+                  <div className="space-y-3">
+                    <input
+                      type="text"
+                      placeholder="Enter list name..."
+                      value={newListName}
+                      onChange={(e) => setNewListName(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Description (optional)"
+                      value={newListDescription}
+                      onChange={(e) => setNewListDescription(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                    />
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={handleCreateList}
+                        disabled={!newListName.trim()}
+                        className="flex-1 px-3 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        Create
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowCreateList(false);
+                          setNewListName('');
+                          setNewListDescription('');
+                        }}
+                        className="px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowCreateList(true)}
+                    className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4 mr-2 inline" />
+                    Create New List
+                  </button>
+                )}
+              </div>
+            </div>
+            
+            {!selectedList && (
+              <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <div className="flex items-center">
+                  <AlertCircle className="w-4 h-4 text-yellow-600 mr-2" />
+                  <span className="text-sm text-yellow-800">
+                    Please select an existing list or create a new one before saving leads.
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="mt-6 flex space-x-3">
@@ -781,7 +1199,8 @@ export default function LeadsPage() {
           <div className="mt-6 flex space-x-3">
             <button
               onClick={handleSaveLeads}
-              className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors cursor-pointer"
+              disabled={!selectedList}
+              className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Users className="w-4 h-4 mr-2 inline" />
               Save {mappedData.length} Leads
@@ -939,6 +1358,223 @@ export default function LeadsPage() {
               <div className="space-x-2 flex justify-between items-center w-full">
                 <button onClick={() => setSidebarLead(null)} className="px-4 py-2 border rounded-lg">Cancel</button>
                 <button onClick={saveSidebarLead} disabled={isSavingLead} className="px-4 py-2 bg-primary text-white rounded-lg disabled:opacity-50 flex items-center"><Save className="w-4 h-4 mr-2" /> {isSavingLead ? 'Updating...' : 'Update'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Message Sending Modal */}
+      {showMessageModal && selectedLeadForMessage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/20" onClick={() => setShowMessageModal(false)} />
+          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {selectedLeadForMessage._id === 'quick-send' ? 'Quick Send Message' : 'Send Message'}
+                </h3>
+                <button
+                  onClick={() => setShowMessageModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              
+              <div className="space-y-4">
+                {selectedLeadForMessage._id === 'quick-send' ? (
+                  // Quick Send Form
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          First Name
+                        </label>
+                        <input
+                          type="text"
+                          value={selectedLeadForMessage.firstName}
+                          onChange={(e) => setSelectedLeadForMessage(prev => prev ? { ...prev, firstName: e.target.value } : null)}
+                          placeholder="First name"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Last Name
+                        </label>
+                        <input
+                          type="text"
+                          value={selectedLeadForMessage.lastName}
+                          onChange={(e) => setSelectedLeadForMessage(prev => prev ? { ...prev, lastName: e.target.value } : null)}
+                          placeholder="Last name"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Email
+                      </label>
+                      <input
+                        type="email"
+                        value={selectedLeadForMessage.email}
+                        onChange={(e) => setSelectedLeadForMessage(prev => prev ? { ...prev, email: e.target.value } : null)}
+                        placeholder="Email address"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Phone Number
+                      </label>
+                      <input
+                        type="text"
+                        value={selectedLeadForMessage.phone}
+                        onChange={(e) => setSelectedLeadForMessage(prev => prev ? { ...prev, phone: e.target.value } : null)}
+                        placeholder="Phone number (+1234567890)"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                      />
+                    </div>
+                    
+                    {/* Check Availability Button */}
+                    <div className="flex items-center justify-between">
+                      <button
+                        onClick={checkQuickSendAvailability}
+                        disabled={selectedLeadForMessage.availabilityStatus === 'checking'}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {selectedLeadForMessage.availabilityStatus === 'checking' ? 'Checking...' : 'Check Availability'}
+                      </button>
+                      
+                      <div className="text-sm">
+                        {selectedLeadForMessage.availabilityStatus === 'checking' && (
+                          <span className="text-yellow-600">• Checking availability...</span>
+                        )}
+                        {selectedLeadForMessage.availabilityStatus === 'available' && (
+                          <span className="text-blue-600">• iMessage available</span>
+                        )}
+                        {selectedLeadForMessage.availabilityStatus === 'unavailable' && (
+                          <span className="text-gray-500">• SMS only</span>
+                        )}
+                        {selectedLeadForMessage.availabilityStatus === 'error' && (
+                          <span className="text-red-600">• Error checking availability</span>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  // Regular Lead Form
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      To: {selectedLeadForMessage.firstName} {selectedLeadForMessage.lastName}
+                    </label>
+                    <div className="text-sm text-gray-500">
+                      {selectedLeadForMessage.email} • {selectedLeadForMessage.phone}
+                      <span className="ml-2">
+                        {selectedLeadForMessage.availabilityStatus === 'available' ? 
+                          <span className="text-blue-600">• iMessage available</span> : 
+                          selectedLeadForMessage.availabilityStatus === 'unavailable' ?
+                          <span className="text-gray-500">• SMS only</span> :
+                          selectedLeadForMessage.availabilityStatus === 'checking' ?
+                          <span className="text-yellow-600">• Checking availability...</span> :
+                          selectedLeadForMessage.availabilityStatus === 'no_active_line' ?
+                          <span className="text-red-600">• Unable to check without active line</span> :
+                          <span className="text-gray-500">• Availability not checked</span>
+                        }
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    From Line
+                  </label>
+                  <select
+                    value={selectedLineId}
+                    onChange={(e) => setSelectedLineId(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                  >
+                    <option value="">Select a line...</option>
+                    {lines.filter(line => line.isActive && line.provisioningStatus === 'active').map((line) => (
+                      <option key={line._id} value={line._id}>
+                        {line.firstName} {line.lastName} ({line.phone})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Message
+                  </label>
+                  <textarea
+                    value={messageText}
+                    onChange={(e) => setMessageText(e.target.value)}
+                    placeholder="Type your message here..."
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                    rows={4}
+                  />
+                </div>
+
+                {!sendImmediately && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Date</label>
+                      <input
+                        type="date"
+                        value={scheduledDate}
+                        onChange={(e) => setScheduledDate(e.target.value)}
+                        min={new Date().toISOString().split('T')[0]}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Time</label>
+                      <input
+                        type="time"
+                        value={scheduledTime}
+                        onChange={(e) => setScheduledTime(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end space-x-3 mt-6">
+                <button
+                  onClick={() => setSendImmediately(false)}
+                  className={`px-6 py-3 rounded-lg font-medium transition-colors ${
+                    !sendImmediately
+                      ? 'bg-primary text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  Send Later
+                </button>
+                <button
+                  onClick={sendMessage}
+                  disabled={
+                    isSendingMessage || 
+                    !selectedLineId || 
+                    !messageText.trim() ||
+                    (!sendImmediately && (!scheduledDate || !scheduledTime)) ||
+                    (selectedLeadForMessage._id === 'quick-send' && 
+                     selectedLeadForMessage.availabilityStatus !== 'available' && 
+                     selectedLeadForMessage.availabilityStatus !== 'unavailable') ||
+                    (selectedLeadForMessage._id !== 'quick-send' && 
+                     selectedLeadForMessage.availabilityStatus !== 'available')
+                  }
+                  className={`px-6 py-3 rounded-lg font-medium transition-colors ${
+                    sendImmediately
+                      ? 'bg-primary text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  {isSendingMessage ? 'Sending...' : 'Send Now'}
+                </button>
               </div>
             </div>
           </div>

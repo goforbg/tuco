@@ -371,14 +371,17 @@ interface IImportJob {
 ### 📋 CSV Template Format
 
 ```csv
-firstName,lastName,email,phone,companyName,jobTitle,linkedinUrl,notes,customField1,customField2
-John,Doe,john.doe@example.com,+1-555-0123,Acme Corp,Software Engineer,https://linkedin.com/in/johndoe,Interested in our product,Value1,Value2
-Jane,Smith,jane.smith@example.com,+1-555-0124,Tech Solutions,Product Manager,https://linkedin.com/in/janesmith,Referred by John,Value3,Value4
+firstName,lastName,email,phone,altPhone1,altPhone2,altPhone3,altEmail1,altEmail2,altEmail3,companyName,jobTitle,linkedinUrl,notes,customField1,customField2
+John,Doe,john.doe@example.com,+15550123,+15550124,+15550125,,john.alt@example.com,john.work@example.com,,Acme Corp,Software Engineer,https://linkedin.com/in/johndoe,Interested in our product,Value1,Value2
+Jane,Smith,jane.smith@example.com,+15550124,+15550125,,,jane.alt@example.com,,,Tech Solutions,Product Manager,https://linkedin.com/in/janesmith,Referred by John,Value3,Value4
 ```
 
 **Mandatory Fields**: firstName, lastName, email, phone
-**Optional Fields**: companyName, jobTitle, linkedinUrl, notes
+**Optional Standard Fields**: companyName, jobTitle, linkedinUrl, notes
+**Alternate Contact Fields**: altPhone1, altPhone2, altPhone3, altEmail1, altEmail2, altEmail3
 **Custom Fields**: Any additional columns will be stored as custom fields
+
+**Note**: Alternate phone and email fields are automatically validated and formatted. The system will check all non-empty contact fields for iMessage availability and prioritize the best available contact method for messaging.
 
 ---
 
