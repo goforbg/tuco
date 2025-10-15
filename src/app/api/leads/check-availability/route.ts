@@ -11,7 +11,8 @@ import { ObjectId } from 'mongodb';
  */
 async function checkSingleAvailability(
   lead: ILead,
-  serverUrl: string
+  serverUrl: string,
+  guid: string
 ): Promise<{ success: boolean; available?: boolean; error?: string; checkedAddresses?: string[] }> {
   try {
     // Collect all non-empty phone and email addresses
@@ -46,10 +47,10 @@ async function checkSingleAvailability(
         const encodedAddress = encodeURIComponent(address);
         
         console.log(`Checking availability for address: ${address} (encoded: ${encodedAddress})`);
-        console.log(`API URL: ${serverUrl}/api/v1/handle/availability/imessage?address=${encodedAddress}&guid=9UV08w2e`);
+        console.log(`API URL: ${serverUrl}/api/v1/handle/availability/imessage?address=${encodedAddress}&guid=${guid}`);
         
         const response = await fetch(
-          `${serverUrl}/api/v1/handle/availability/imessage?address=${encodedAddress}&guid=9UV08w2e`,
+          `${serverUrl}/api/v1/handle/availability/imessage?address=${encodedAddress}&guid=${guid}`,
           {
             method: 'GET',
             headers: {
@@ -164,7 +165,7 @@ export async function GET(request: NextRequest) {
     );
 
     // Check availability
-    const result = await checkSingleAvailability(lead, activeLine.serverUrl);
+    const result = await checkSingleAvailability(lead, activeLine.serverUrl, activeLine.guid);
 
     // Update lead with result
     const updateData: Record<string, unknown> = {
@@ -373,7 +374,7 @@ export async function POST(request: NextRequest) {
     let errorCount = 0;
 
     for (const lead of leads) {
-      const result = await checkSingleAvailability(lead, activeLine.serverUrl);
+      const result = await checkSingleAvailability(lead, activeLine.serverUrl, activeLine.guid);
       
       const updateData: Record<string, unknown> = {
         availabilityCheckedAt: new Date(),

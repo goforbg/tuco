@@ -81,21 +81,58 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    // Insert leads into database
-    const result = await db.collection<ILead>(LeadCollection).insertMany(processedLeads);
+    // Check for duplicates based on email + phone combination in the workspace
+    const emailPhonePairs = processedLeads.map(lead => ({
+      email: lead.email.toLowerCase(),
+      phone: lead.phone
+    }));
 
-    // Update list lead count
-    await db.collection<IList>(ListCollection).updateOne(
-      { _id: new ObjectId(listId), workspaceId: orgId },
-      { 
-        $inc: { leadCount: result.insertedCount },
-        $set: { updatedAt: new Date() }
-      }
+    const existingLeads = await db.collection<ILead>(LeadCollection)
+      .find({
+        workspaceId: orgId,
+        $or: emailPhonePairs.map(pair => ({
+          email: pair.email,
+          phone: pair.phone
+        }))
+      })
+      .project({ email: 1, phone: 1 })
+      .toArray();
+
+    // Create a Set of existing email+phone combinations for fast lookup
+    const existingCombos = new Set(
+      existingLeads.map(lead => `${lead.email.toLowerCase()}:${lead.phone}`)
     );
 
+    // Filter out duplicates
+    const newLeads = processedLeads.filter(lead => 
+      !existingCombos.has(`${lead.email.toLowerCase()}:${lead.phone}`)
+    );
+
+    const duplicateCount = processedLeads.length - newLeads.length;
+
+    // Insert only new leads
+    let insertedCount = 0;
+    let leadIds: string[] = [];
+    
+    if (newLeads.length > 0) {
+      const result = await db.collection<ILead>(LeadCollection).insertMany(newLeads);
+      insertedCount = result.insertedCount;
+      leadIds = Object.values(result.insertedIds).map(id => id.toString());
+    }
+
+    // Update list lead count
+    if (insertedCount > 0) {
+      await db.collection<IList>(ListCollection).updateOne(
+        { _id: new ObjectId(listId), workspaceId: orgId },
+        { 
+          $inc: { leadCount: insertedCount },
+          $set: { updatedAt: new Date() }
+        }
+      );
+    }
+
     // Trigger bulk availability checking for new leads (async, don't wait)
-    if (result.insertedCount > 0) {
-      const leadIds = Object.values(result.insertedIds).map(id => id.toString());
+    if (leadIds.length > 0) {
       
       // Start bulk availability checking in background with proper auth
       fetch(`${process.env.NEXT_PUBLIC_APP_URL|| 'https://app.tuco.ai'}/api/leads/check-availability`, {
@@ -135,7 +172,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ 
       message: 'Leads saved successfully', 
-      savedCount: result.insertedCount,
+      savedCount: insertedCount,
+      duplicateCount,
+      totalProcessed: processedLeads.length,
       listId: listId || null
     });
 

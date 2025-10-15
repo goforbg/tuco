@@ -9,6 +9,7 @@ export interface ILine {
 
   // Critical server-only properties (NEVER expose to frontend)
   serverUrl: string; // Internal server URL for this line
+  guid: string; // Unique identifier for the line server
 
   // Line Profile (purchased identity)
   phone: string;

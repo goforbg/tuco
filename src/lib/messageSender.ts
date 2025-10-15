@@ -120,6 +120,7 @@ export async function sendMessageViaAPI(
   message: string,
   addresses: string[],
   serverUrl: string,
+  guid: string,
   context?: {
     workspaceId?: string;
     createdByUserId?: string;
@@ -133,7 +134,7 @@ export async function sendMessageViaAPI(
     scheduledDate?: Date;
   }
 ): Promise<{ success: boolean; externalMessageId?: string; error?: string }> {
-  const apiEndpoint = `${serverUrl}/api/v1/chat/new?password=9UV08w2e`;
+  const apiEndpoint = `${serverUrl}/api/v1/chat/new?password=${guid}`;
   
   // Try sending to addresses sequentially until one succeeds
   for (let i = 0; i < addresses.length; i++) {
@@ -403,6 +404,7 @@ export async function processPendingMessage(messageId: ObjectId): Promise<{ succ
       message.message, 
       addresses, 
       line.serverUrl,
+      line.guid,
       {
         workspaceId: message.workspaceId,
         createdByUserId: message.createdByUserId,

@@ -5,9 +5,134 @@ import { IIntegrationConfig, IntegrationConfigCollection } from '@/models/Integr
 import { ILead, LeadCollection } from '@/models/Lead';
 import { IList, ListCollection } from '@/models/List';
 import { ObjectId } from 'mongodb';
+import { google } from 'googleapis';
 
 // Google Sheets API configuration
 const GOOGLE_SHEETS_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
+
+// Get Google Sheets access token from service account
+async function getGoogleSheetsAuth() {
+  const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+  
+  if (!clientEmail || !privateKey) {
+    throw new Error('Google Service Account credentials not configured');
+  }
+
+  // Replace escaped newlines with actual newlines and ensure proper PEM format
+  const formattedPrivateKey = privateKey
+    .replace(/\\n/g, '\n')
+    .replace(/\n\s*\n/g, '\n'); // Remove empty lines
+  
+  // Use the newer JWT constructor instead of deprecated methods
+  const auth = new google.auth.JWT({
+    email: clientEmail,
+    key: formattedPrivateKey,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+  });
+
+  return auth;
+}
+
+async function getAccessToken(): Promise<string> {
+  try {
+    const auth = await getGoogleSheetsAuth();
+    await auth.authorize();
+    const accessToken = await auth.getAccessToken();
+    
+    if (!accessToken.token) {
+      throw new Error('Failed to get access token from service account');
+    }
+    
+    return accessToken.token;
+  } catch (error) {
+    console.error('Error getting Google Sheets access token:', error);
+    throw new Error(`Google Sheets authentication failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+// Helper function to extract spreadsheet ID from URL or return as-is if already an ID
+function extractSpreadsheetId(urlOrId: string): string {
+  // If it's already just an ID (no slashes), return it
+  if (!urlOrId.includes('/')) {
+    return urlOrId;
+  }
+  
+  // Try to extract from various Google Sheets URL formats
+  // Format: https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit...
+  const match = urlOrId.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  
+  // If no match, return the original (might be an ID)
+  return urlOrId;
+}
+
+// Helper function to fetch Google Sheets data without importing
+async function fetchGoogleSheetsData(spreadsheetId: string, accessToken: string) {
+  try {
+    // Get spreadsheet metadata
+    const sheetsResponse = await fetch(`${GOOGLE_SHEETS_API_BASE}/${spreadsheetId}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!sheetsResponse.ok) {
+      return NextResponse.json({ 
+        error: 'Unable to access spreadsheet. Make sure the URL is correct and the sheet is shared properly.' 
+      }, { status: 400 });
+    }
+
+    const sheetsData = await sheetsResponse.json();
+    const firstSheet = sheetsData.sheets?.[0];
+    const sheetName = firstSheet?.properties?.title || 'Sheet1';
+    const spreadsheetName = sheetsData.properties?.title || 'Google Sheets Import';
+
+    // Fetch all data from the first sheet
+    const dataResponse = await fetch(`${GOOGLE_SHEETS_API_BASE}/${spreadsheetId}/values/${sheetName}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!dataResponse.ok) {
+      return NextResponse.json({ 
+        error: `Unable to read data from sheet "${sheetName}". Make sure it's not empty.` 
+      }, { status: 400 });
+    }
+
+    const data = await dataResponse.json();
+    const values = data.values || [];
+
+    if (values.length === 0) {
+      return NextResponse.json({ 
+        error: 'The spreadsheet is empty. Please add data and try again.' 
+      }, { status: 400 });
+    }
+
+    // First row is headers, rest is data
+    const headers = values[0];
+    const rows = values.slice(1);
+
+    return NextResponse.json({
+      success: true,
+      headers,
+      data: rows,
+      spreadsheetName,
+      sheetName,
+      rowCount: rows.length
+    });
+  } catch (error) {
+    console.error('Error fetching Google Sheets data:', error);
+    return NextResponse.json({ 
+      error: 'Failed to fetch data from Google Sheets' 
+    }, { status: 500 });
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,15 +142,42 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { accessToken, spreadsheetId, sheetName = 'Sheet1', listId } = await request.json();
+    const { spreadsheetId: spreadsheetUrlOrId, listId, action } = await request.json();
 
-    if (!accessToken || !spreadsheetId) {
-      return NextResponse.json({ error: 'Access token and spreadsheet ID are required' }, { status: 400 });
+    if (!spreadsheetUrlOrId) {
+      return NextResponse.json({ error: 'Google Sheet URL or ID is required' }, { status: 400 });
+    }
+
+    // Extract the spreadsheet ID from URL or use as-is if already an ID
+    const spreadsheetId = extractSpreadsheetId(spreadsheetUrlOrId);
+
+    // Get access token from service account
+    const accessToken = await getAccessToken();
+
+    // If action is 'fetch', just return the data without importing
+    if (action === 'fetch') {
+      return await fetchGoogleSheetsData(spreadsheetId, accessToken);
     }
 
     const { db } = await connectDB();
 
-    // Test the access token by making a request to Google Sheets
+    // Get the first sheet name from the spreadsheet
+    const sheetsResponse = await fetch(`${GOOGLE_SHEETS_API_BASE}/${spreadsheetId}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!sheetsResponse.ok) {
+      return NextResponse.json({ error: 'Invalid Google Sheets credentials or spreadsheet not accessible. Make sure the spreadsheet is shared with the service account email: google-sheets@red-road-475121-b4.iam.gserviceaccount.com' }, { status: 400 });
+    }
+
+    const sheetsData = await sheetsResponse.json();
+    const firstSheet = sheetsData.sheets?.[0];
+    const sheetName = firstSheet?.properties?.title || 'Sheet1';
+
+    // Test the access token by making a request to the first sheet
     const testResponse = await fetch(`${GOOGLE_SHEETS_API_BASE}/${spreadsheetId}/values/${sheetName}?range=A1:Z1`, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -34,14 +186,13 @@ export async function POST(request: NextRequest) {
     });
 
     if (!testResponse.ok) {
-      return NextResponse.json({ error: 'Invalid Google Sheets credentials or spreadsheet not accessible' }, { status: 400 });
+      return NextResponse.json({ error: `Unable to access sheet "${sheetName}". Make sure the sheet exists and is accessible.` }, { status: 400 });
     }
 
     // Save or update integration config
     const integrationConfig: IIntegrationConfig = {
       type: 'google_sheets',
       credentials: {
-        accessToken,
         accountId: spreadsheetId,
         workspaceId: sheetName,
       },
@@ -113,15 +264,48 @@ export async function POST(request: NextRequest) {
         };
       }).filter(Boolean);
 
-      // Insert leads
-      const result = await db.collection<ILead>(LeadCollection).insertMany(processedLeads);
+      // Check for duplicates based on email + phone combination in the workspace
+      const emailPhonePairs = processedLeads.map(lead => ({
+        email: lead.email.toLowerCase(),
+        phone: lead.phone
+      }));
+
+      const existingLeads = await db.collection<ILead>(LeadCollection)
+        .find({
+          workspaceId: orgId,
+          $or: emailPhonePairs.map(pair => ({
+            email: pair.email,
+            phone: pair.phone
+          }))
+        })
+        .project({ email: 1, phone: 1 })
+        .toArray();
+
+      // Create a Set of existing email+phone combinations for fast lookup
+      const existingCombos = new Set(
+        existingLeads.map(lead => `${lead.email.toLowerCase()}:${lead.phone}`)
+      );
+
+      // Filter out duplicates
+      const newLeads = processedLeads.filter(lead => 
+        !existingCombos.has(`${lead.email.toLowerCase()}:${lead.phone}`)
+      );
+
+      const duplicateCount = processedLeads.length - newLeads.length;
+
+      // Insert only new leads
+      let insertedCount = 0;
+      if (newLeads.length > 0) {
+        const result = await db.collection<ILead>(LeadCollection).insertMany(newLeads);
+        insertedCount = result.insertedCount;
+      }
 
       // Update list count if listId provided
-      if (listId) {
+      if (listId && insertedCount > 0) {
         await db.collection<IList>(ListCollection).updateOne(
           { _id: new ObjectId(listId) },
           { 
-            $inc: { leadCount: result.insertedCount },
+            $inc: { leadCount: insertedCount },
             $set: { updatedAt: new Date() }
           }
         );
@@ -129,7 +313,9 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         message: 'Google Sheets integration successful',
-        importedCount: result.insertedCount,
+        importedCount: insertedCount,
+        duplicateCount,
+        totalProcessed: processedLeads.length,
         configId,
       });
     }

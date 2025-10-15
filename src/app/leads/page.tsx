@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Upload, Download, MapPin, Users, FileText, AlertCircle, Plus, Search, X, Save, Trash2, ChevronLeft, ChevronRight, Info, Zap, LoaderCircle } from 'lucide-react';
+import { Upload, Download, MapPin, Users, FileText, AlertCircle, Plus, Search, X, Save, Trash2, Trash, ChevronLeft, ChevronRight, Info, Zap, LoaderCircle } from 'lucide-react';
 import { useOrganization } from '@clerk/nextjs';
 import { toast } from 'sonner';
 // import Papa from 'papaparse';
@@ -100,6 +100,7 @@ export default function LeadsPage() {
   const [orgMembers, setOrgMembers] = useState<Array<{ id: string; email: string; name: string }>>([]);
   const [customFieldEntries, setCustomFieldEntries] = useState<Array<{ key: string; value: string }>>([]);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [showBulkDeleteList, setShowBulkDeleteList] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { organization } = useOrganization();
 
@@ -699,15 +700,31 @@ export default function LeadsPage() {
 
   const toggleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedIds(leads.map(l => l._id!).filter(Boolean));
+      setSelectedIds(filteredLeads.map(l => l._id!).filter(Boolean));
+      // Show bulk delete option when all filtered leads are selected
+      if (selectedList && filteredLeads.length > 0) {
+        setShowBulkDeleteList(true);
+      }
     } else {
       setSelectedIds([]);
+      setShowBulkDeleteList(false);
     }
   };
 
   const toggleSelectOne = (id?: string) => {
     if (!id) return;
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    setSelectedIds(prev => {
+      const newSelectedIds = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+      
+      // Hide bulk delete option if not all filtered leads are selected
+      if (newSelectedIds.length !== filteredLeads.length || !selectedList) {
+        setShowBulkDeleteList(false);
+      } else if (newSelectedIds.length === filteredLeads.length && selectedList) {
+        setShowBulkDeleteList(true);
+      }
+      
+      return newSelectedIds;
+    });
   };
 
   const handleDeleteSelected = async () => {
@@ -724,6 +741,40 @@ export default function LeadsPage() {
       }
     } catch (e) {
       console.error('Delete failed', e);
+    }
+  };
+
+  const handleDeleteEntireList = async () => {
+    if (!selectedList) return;
+    const list = lists.find(l => l._id === selectedList);
+    const listName = list?.name || 'this list';
+    const leadCount = list?.leadCount || 0;
+    if (!confirm(`Delete entire list "${listName}" and all ${leadCount} leads in it? This action cannot be undone.`)) return;
+    
+    try {
+      const res = await fetch('/api/lists', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listId: selectedList, deleteLeads: true })
+      });
+      
+      if (res.ok) {
+        toast.success(`List "${listName}" and all leads deleted successfully`);
+        setSelectedList('');
+        setSelectedIds([]);
+        setShowBulkDeleteList(false);
+        await loadLeadsAndLists();
+      } else {
+        const errorData = await res.json();
+        toast.error('Failed to delete list', {
+          description: errorData.error || 'Please try again.'
+        });
+      }
+    } catch (e) {
+      console.error('Delete list failed', e);
+      toast.error('Failed to delete list', {
+        description: 'Network error. Please try again.'
+      });
     }
   };
 
@@ -986,11 +1037,23 @@ export default function LeadsPage() {
                   <Zap className="w-4 h-4 mr-1" />
                   <span className="text-body-small font-body-small">Recheck</span>
                 </button>
+                {showBulkDeleteList && selectedList && (
+                  <button
+                    onClick={handleDeleteEntireList}
+                    className="shrink-0 flex items-center px-3 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
+                    title="Delete entire list and all leads"
+                  >
+                    <Trash className="w-4 h-4 mr-1" />
+                    <span className="text-body-small font-body-small">Delete Entire List</span>
+                  </button>
+                )}
                 <button
                   onClick={handleDeleteSelected}
-                  className="flex items-center px-3 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
+                  className="shrink-0 flex items-center px-3 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
+                  title="Delete selected leads"
                 >
                   <Trash2 className="w-4 h-4 mr-1" />
+                  <span className="text-body-small font-body-small">Delete Selected</span>
                 </button>
               </>
             )}
@@ -1076,7 +1139,7 @@ export default function LeadsPage() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3"><input type="checkbox" aria-label="Select all" checked={selectedIds.length === leads.length && leads.length > 0} onChange={(e) => toggleSelectAll(e.target.checked)} /></th>
+                  <th className="px-6 py-3"><input type="checkbox" aria-label="Select all" checked={selectedIds.length === filteredLeads.length && filteredLeads.length > 0} onChange={(e) => toggleSelectAll(e.target.checked)} /></th>
                   <th className="px-6 py-3 text-left text-body-small font-body-small text-gray-500 uppercase tracking-wider">
                     Name
                   </th>
@@ -1086,7 +1149,7 @@ export default function LeadsPage() {
                   <th className="px-6 py-3 text-left text-body-small font-body-small text-gray-500 uppercase tracking-wider">
                     Phone
                   </th>
-                  <th className="px-6 py-3 text-left text-body-small font-body-small text-gray-500 uppercase tracking-wider">
+                  <th className="px-2 py-3 text-left text-body-small font-body-small text-gray-500 uppercase tracking-wider w-20">
                     iMessage
                   </th>
                   <th className="px-6 py-3 text-left text-body-small font-body-small text-gray-500 uppercase tracking-wider">
@@ -1111,7 +1174,7 @@ export default function LeadsPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500 cursor-pointer" onClick={() => setSidebarLead(lead)}>
                       {lead.phone}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500">
+                    <td className="px-2 py-4 whitespace-nowrap text-body-small text-gray-500">
                       {getAvailabilityDot(lead)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-body-small text-gray-500 cursor-pointer" onClick={() => setSidebarLead(lead)}>
@@ -1134,21 +1197,38 @@ export default function LeadsPage() {
                       <span className="relative inline-block">
                         <button onClick={() => setOpenMenuId(openMenuId === lead._id ? null : (lead._id || null))} className="px-2 py-1 border border-gray-300 rounded-lg hover:bg-gray-50">•••</button>
                         {openMenuId === lead._id && (
-                          <div className="absolute right-0 mt-2 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-20 text-left">
-                            <button onClick={() => { setSidebarLead(lead); setOpenMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-gray-50">Edit</button>
-                            <button 
-                              onClick={() => {
-                                setSelectedLeadForMessage(lead);
-                                setShowMessageModal(true);
-                                setOpenMenuId(null);
-                              }} 
-                              disabled={lead.availabilityStatus !== 'available'}
-                              className="w-full text-left px-3 py-2 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              Send Message
-                            </button>
-                            <button onClick={() => { recheckSingleAvailability(lead._id); setOpenMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-gray-50 text-blue-600">Recheck Availability</button>
-                            <button onClick={() => { deleteSingleLead(lead._id); setOpenMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-gray-50 text-red-600">Delete</button>
+                          <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden">
+                            <div className="py-1">
+                              <button 
+                                onClick={() => { setSidebarLead(lead); setOpenMenuId(null); }} 
+                                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 block"
+                              >
+                                Edit
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  setSelectedLeadForMessage(lead);
+                                  setShowMessageModal(true);
+                                  setOpenMenuId(null);
+                                }} 
+                                disabled={lead.availabilityStatus !== 'available'}
+                                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed block"
+                              >
+                                Send Message
+                              </button>
+                              <button 
+                                onClick={() => { recheckSingleAvailability(lead._id); setOpenMenuId(null); }} 
+                                className="w-full text-left px-4 py-2 text-sm text-blue-600 hover:bg-gray-100 block"
+                              >
+                                Recheck Availability
+                              </button>
+                              <button 
+                                onClick={() => { deleteSingleLead(lead._id); setOpenMenuId(null); }} 
+                                className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100 block"
+                              >
+                                Delete
+                              </button>
+                            </div>
                           </div>
                         )}
                       </span>

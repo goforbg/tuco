@@ -6,6 +6,16 @@ import { MessageCollection } from '@/models/Message';
 import { ObjectId } from 'mongodb';
 import { sendTelegramNotification } from '@/lib/telegram';
 
+// Generate a random GUID for new lines
+function generateGuid(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  for (let i = 0; i < 8; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
 // GET /api/lines - list lines for current org
 export async function GET() {
   try {
@@ -74,7 +84,7 @@ export async function GET() {
 
         // Strip critical server-only properties before sending to frontend
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { serverUrl, ...safeLine } = line;
+        const { serverUrl, guid, ...safeLine } = line;
         
         return {
           ...safeLine,
@@ -124,6 +134,7 @@ export async function POST(request: NextRequest) {
       workspaceId: orgId,
       createdByUserId: userId,
       serverUrl: `https://line-${Date.now()}.internal.tuco.ai`, // Internal server URL
+      guid: generateGuid(), // Generate unique GUID for this line
       phone: phone || 'PENDING',
       email: email || `pending+${Date.now()}@assigned.local`,
       firstName,
@@ -247,8 +258,8 @@ export async function PUT(request: NextRequest) {
 
     // Strip critical server-only properties before sending to frontend
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { serverUrl, ...safeLine } = updatedLine;
-    // serverUrl is intentionally excluded for security
+    const { serverUrl, guid, ...safeLine } = updatedLine;
+    // serverUrl and guid are intentionally excluded for security
 
     return NextResponse.json({ line: safeLine });
   } catch (error) {

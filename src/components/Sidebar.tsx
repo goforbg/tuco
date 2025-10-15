@@ -15,7 +15,8 @@ import {
   Megaphone, 
   ChevronLeft,
   ChevronRight,
-  Smartphone
+  Smartphone,
+  Send
 } from 'lucide-react';
 import Image from 'next/image';
 
@@ -32,6 +33,7 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
   const navigationItems = [
     { id: 'overview', label: 'Overview', icon: Home, href: '/' },
     { id: 'leads', label: 'Leads', icon: Users, href: '/leads' },
+    { id: 'campaigns', label: 'Campaigns', icon: Send, href: '/campaigns' },
     { id: 'lines', label: 'Lines', icon: Smartphone, href: '/lines' },
     { id: 'activity', label: 'Activity Logs', icon: Activity, href: '/activities' },
     { id: 'usage', label: 'Usage', icon: BarChart3 },

@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell, HelpCircle, FileText, ArrowUp, Menu } from 'lucide-react';
+import { HelpCircle, FileText, Menu } from 'lucide-react';
 import { useOrganization } from '@clerk/nextjs';
 
 interface TopBarProps {
@@ -39,24 +39,23 @@ export default function TopBar({ onMenuToggle, isMobile }: TopBarProps) {
 
         {/* Right: Actions */}
         <div className="flex items-center space-x-2 md:space-x-3">
-          <button className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer">
-            <Bell className="icon-24" />
-          </button>
-
-          <button className="hidden md:flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer">
+          <a 
+            href="mailto:bharadwaj@inboxpiratesconsulting.com?subject=Tuco Help Request&body=You can also reach me via WhatsApp/iMessage at +91 9042956129"
+            className="hidden md:flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+          >
             <HelpCircle className="icon-24 mr-2" />
             <span className="text-body-small font-body-small">Help</span>
-          </button>
+          </a>
 
-          <button className="hidden md:flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer">
+          <a 
+            href="https://docs.tuco.ai"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hidden md:flex items-center px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+          >
             <FileText className="icon-24 mr-2" />
             <span className="text-body-small font-body-small">Docs</span>
-          </button>
-
-          <button className="flex items-center px-3 md:px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors cursor-pointer">
-            <ArrowUp className="icon-24 mr-2" />
-            <span className="text-body-small font-body-small hidden sm:inline">Upgrade</span>
-          </button>
+          </a>
         </div>
       </div>
     </div>

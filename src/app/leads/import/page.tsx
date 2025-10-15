@@ -16,7 +16,8 @@ import {
   MapPin,
   Eye,
   Save,
-  ArrowLeft
+  ArrowLeft,
+  Send
 } from 'lucide-react';
 import Papa from 'papaparse';
 import DashboardLayout from '@/components/DashboardLayout';
@@ -294,7 +295,7 @@ const CSVUploadAndSetup = ({
                     <select
                       value={selectedListId}
                       onChange={(e) => setSelectedListId(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm bg-white"
                     >
                       <option value="">Select a list…</option>
                       {lists.map((l) => (
@@ -827,13 +828,15 @@ const ImportComplete = ({
   fileName,
   processedLeads,
   onViewLeads,
-  onImportMore
+  onImportMore,
+  listId
 }: {
-  importSummary: { savedCount: number; invalidCount: number; listName?: string } | null;
+  importSummary: { savedCount: number; invalidCount: number; duplicateCount?: number; listName?: string } | null;
   fileName: string;
   processedLeads: ProcessedLead[];
   onViewLeads: () => void;
   onImportMore: () => void;
+  listId?: string;
 }) => (
   <div className="p-8 text-center">
     <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -850,6 +853,12 @@ const ImportComplete = ({
         <span className="text-gray-600">Saved</span>
         <span className="text-green-700 font-medium">{importSummary?.savedCount ?? processedLeads.length}</span>
       </div>
+      {(importSummary?.duplicateCount ?? 0) > 0 && (
+        <div className="flex justify-between py-2">
+          <span className="text-gray-600">Duplicates Skipped</span>
+          <span className="text-yellow-600 font-medium">{importSummary?.duplicateCount}</span>
+        </div>
+      )}
       <div className="flex justify-between py-2">
         <span className="text-gray-600">Invalid</span>
         <span className="text-red-600">{importSummary?.invalidCount ?? 0}</span>
@@ -861,9 +870,18 @@ const ImportComplete = ({
     </div>
 
     <div className="flex justify-center space-x-4 mt-8">
+      {listId && (
+        <a
+          href={`/campaigns?listId=${listId}`}
+          className="inline-flex items-center px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium"
+        >
+          <Send className="w-4 h-4 mr-2" />
+          Start Campaign
+        </a>
+      )}
       <button
         onClick={onViewLeads}
-        className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium"
+        className="px-6 py-3 border border-primary text-primary rounded-lg hover:bg-primary-light transition-colors font-medium"
       >
         View Leads
       </button>
@@ -877,232 +895,10 @@ const ImportComplete = ({
   </div>
 );
 
-// Quick Send Component
-const QuickSend = ({
-  onBack,
-  onSend
-}: {
-  onBack: () => void;
-  onSend: (phoneOrEmail: string, message: string, sendNow: boolean, scheduledDate?: Date) => Promise<void>;
-}) => {
-  const [phoneOrEmail, setPhoneOrEmail] = useState('');
-  const [message, setMessage] = useState('');
-  const [sendNow, setSendNow] = useState(true);
-  const [scheduledDate, setScheduledDate] = useState('');
-  const [scheduledTime, setScheduledTime] = useState('');
-  const [isCheckingAvailability, setIsCheckingAvailability] = useState(false);
-  const [availabilityStatus, setAvailabilityStatus] = useState<'unknown' | 'available' | 'unavailable'>('unknown');
-  const [isSending, setIsSending] = useState(false);
-
-  // Check availability when phone/email changes
-  useEffect(() => {
-    const checkAvailability = async () => {
-      if (!phoneOrEmail.trim()) {
-        setAvailabilityStatus('unknown');
-        return;
-      }
-
-      setIsCheckingAvailability(true);
-      try {
-        // Call the availability check API
-        const response = await fetch('/api/leads/check-availability', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            leadIds: [], // We'll check individual address
-            address: phoneOrEmail.trim()
-          })
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          setAvailabilityStatus(data.available ? 'available' : 'unavailable');
-        } else {
-          setAvailabilityStatus('unknown');
-        }
-      } catch (error) {
-        console.error('Error checking availability:', error);
-        setAvailabilityStatus('unknown');
-      } finally {
-        setIsCheckingAvailability(false);
-      }
-    };
-
-    const timeoutId = setTimeout(checkAvailability, 500); // Debounce
-    return () => clearTimeout(timeoutId);
-  }, [phoneOrEmail]);
-
-  const handleSend = async () => {
-    if (!phoneOrEmail.trim() || !message.trim()) return;
-
-    setIsSending(true);
-    try {
-      let scheduledDateTime: Date | undefined;
-      if (!sendNow && scheduledDate && scheduledTime) {
-        scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
-        if (scheduledDateTime <= new Date()) {
-          alert('Scheduled time must be in the future');
-          setIsSending(false);
-          return;
-        }
-      }
-
-      await onSend(phoneOrEmail.trim(), message.trim(), sendNow, scheduledDateTime);
-    } catch (error) {
-      console.error('Error sending message:', error);
-      alert('Error sending message. Please try again.');
-    } finally {
-      setIsSending(false);
-    }
-  };
-
-  return (
-    <div className="p-8">
-      <div className="flex items-center mb-6">
-        <button
-          onClick={onBack}
-          className="flex items-center text-gray-600 hover:text-gray-900 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back
-        </button>
-      </div>
-
-      <div className="max-w-2xl mx-auto">
-        <div className="text-center mb-8">
-          <h2 className="text-2xl font-semibold text-gray-900 mb-2">Quick Send Message</h2>
-          <p className="text-gray-600">Send a message directly without importing leads</p>
-        </div>
-
-        <div className="space-y-6">
-          {/* Phone/Email Input */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Phone Number or Email
-            </label>
-            <div className="relative">
-              <input
-                type="text"
-                value={phoneOrEmail}
-                onChange={(e) => setPhoneOrEmail(e.target.value)}
-                placeholder="Enter phone number (+1234567890) or email address"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent pr-12"
-              />
-              <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                {isCheckingAvailability ? (
-                  <div className="w-5 h-5 border-2 border-gray-300 border-t-primary rounded-full animate-spin" />
-                ) : availabilityStatus === 'available' ? (
-                  <div className="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center">
-                    <span className="text-white text-xs font-bold">i</span>
-                  </div>
-                ) : availabilityStatus === 'unavailable' ? (
-                  <div className="w-5 h-5 bg-gray-400 rounded-full flex items-center justify-center">
-                    <span className="text-white text-xs font-bold">!</span>
-                  </div>
-                ) : (
-                  <div className="w-5 h-5 border-2 border-gray-300 rounded-full" />
-                )}
-              </div>
-            </div>
-            {availabilityStatus === 'available' && (
-              <p className="text-sm text-blue-600 mt-1">✓ This address supports iMessage</p>
-            )}
-            {availabilityStatus === 'unavailable' && (
-              <p className="text-sm text-gray-500 mt-1">This address does not support iMessage</p>
-            )}
-          </div>
-
-          {/* Message Input */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Message
-            </label>
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder="Enter your message here..."
-              rows={4}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-            />
-          </div>
-
-          {/* Send Options */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              When to send?
-            </label>
-            <div className="flex space-x-3">
-              <button
-                onClick={() => setSendNow(true)}
-                className={`px-6 py-3 rounded-lg font-medium transition-colors ${
-                  sendNow
-                    ? 'bg-primary text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                Send Now
-              </button>
-              <button
-                onClick={() => setSendNow(false)}
-                className={`px-6 py-3 rounded-lg font-medium transition-colors ${
-                  !sendNow
-                    ? 'bg-primary text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                Send Later
-              </button>
-            </div>
-          </div>
-
-          {/* Schedule Options */}
-          {!sendNow && (
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Date
-                </label>
-                <input
-                  type="date"
-                  value={scheduledDate}
-                  onChange={(e) => setScheduledDate(e.target.value)}
-                  min={new Date().toISOString().split('T')[0]}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Time
-                </label>
-                <input
-                  type="time"
-                  value={scheduledTime}
-                  onChange={(e) => setScheduledTime(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Send Button */}
-          <div className="flex justify-end">
-            <button
-              onClick={handleSend}
-              disabled={!phoneOrEmail.trim() || !message.trim() || isSending || (availabilityStatus === 'unavailable')}
-              className="px-8 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
-            >
-              {isSending ? 'Sending...' : sendNow ? 'Send Now' : 'Schedule Message'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 export default function LeadsImportPage() {
   // Step management
-  const [currentStep, setCurrentStep] = useState<'select' | 'upload' | 'list' | 'mapping' | 'preview' | 'confirm' | 'complete' | 'quickSend'>('select');
+  const [currentStep, setCurrentStep] = useState<'select' | 'upload' | 'list' | 'mapping' | 'preview' | 'confirm' | 'complete'>('select');
   
   // Debug step changes
   useEffect(() => {
@@ -1123,7 +919,7 @@ export default function LeadsImportPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
-  const [importSummary, setImportSummary] = useState<{ savedCount: number; invalidCount: number; listName?: string } | null>(null);
+  const [importSummary, setImportSummary] = useState<{ savedCount: number; invalidCount: number; duplicateCount?: number; listName?: string } | null>(null);
   
   // Lists selection
   const [lists, setLists] = useState<Array<{ _id: string; name: string }>>([]);
@@ -1134,12 +930,10 @@ export default function LeadsImportPage() {
   // Integration states
   const [integrationCredentials, setIntegrationCredentials] = useState<{
     apiKey: string;
-    accessToken: string;
     accountId: string;
     workspaceId: string;
   }>({
     apiKey: '',
-    accessToken: '',
     accountId: '',
     workspaceId: '',
   });
@@ -1165,7 +959,6 @@ export default function LeadsImportPage() {
     setNewListName('');
     setIntegrationCredentials({
       apiKey: '',
-      accessToken: '',
       accountId: '',
       workspaceId: '',
     });
@@ -1196,12 +989,8 @@ export default function LeadsImportPage() {
   // Handle option selection
   const handleOptionSelect = (optionId: string) => {
     setSelectedOption(optionId);
-    if (optionId === 'csv') {
-      setCurrentStep('upload');
-      loadLists();
-    } else {
-      setCurrentStep('upload'); // For integrations, we'll show their setup
-    }
+    setCurrentStep('upload');
+    loadLists(); // Load lists for ALL import methods
   };
 
   // Handle CSV upload and setup continue
@@ -1744,12 +1533,12 @@ export default function LeadsImportPage() {
 
       const result = await response.json();
       const listName = lists.find(l => l._id === result.listId)?.name;
-      setImportSummary({ savedCount: result.savedCount || processedLeads.length, invalidCount: Math.max(0, (csvData.length || 0) - processedLeads.length), listName });
-      // Handle partial success (some leads saved, some failed due to duplicates)
-      if (result.savedCount < processedLeads.length) {
-        // const duplicateCount = processedLeads.length - result.savedCount;
-      } else {
-      }
+      setImportSummary({ 
+        savedCount: result.savedCount || processedLeads.length, 
+        invalidCount: Math.max(0, (csvData.length || 0) - processedLeads.length),
+        duplicateCount: result.duplicateCount || 0,
+        listName 
+      });
       
       setCurrentStep('complete');
     } catch (error) {
@@ -1760,57 +1549,6 @@ export default function LeadsImportPage() {
     }
   };
 
-  // Quick Send handler
-  const handleQuickSend = async (phoneOrEmail: string, message: string, sendNow: boolean, scheduledDate?: Date) => {
-    try {
-      // Get an active line
-      const linesResponse = await fetch('/api/lines');
-      if (!linesResponse.ok) {
-        throw new Error('Failed to fetch lines');
-      }
-      const linesData = await linesResponse.json();
-      const activeLine = linesData.lines.find((line: { isActive: boolean; provisioningStatus: string }) => line.isActive && line.provisioningStatus === 'active');
-      
-      if (!activeLine) {
-        alert('No active line found. Please create and activate a line first.');
-        return;
-      }
-
-      // Determine message type based on availability
-      let messageType = 'imessage'; // Default to iMessage
-      if (phoneOrEmail.includes('@')) {
-        messageType = 'email';
-      } else {
-        messageType = 'imessage';
-      }
-
-      // Send the message
-      const response = await fetch('/api/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message,
-          messageType,
-          fromLineId: activeLine._id,
-          recipientEmail: phoneOrEmail.includes('@') ? phoneOrEmail : undefined,
-          recipientPhone: !phoneOrEmail.includes('@') ? phoneOrEmail : undefined,
-          recipientName: phoneOrEmail,
-          scheduledDate: sendNow ? undefined : scheduledDate?.toISOString(),
-        }),
-      });
-
-      if (response.ok) {
-        alert(`Message ${sendNow ? 'sent' : 'scheduled'} successfully!`);
-        setCurrentStep('select');
-      } else {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to send message');
-      }
-    } catch (error) {
-      console.error('Error sending quick message:', error);
-      alert(`Error sending message: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  };
 
   // Integration handlers
   const handleIntegrationConnect = async () => {
@@ -1837,10 +1575,33 @@ export default function LeadsImportPage() {
       }
 
       if (selectedOption === 'google-sheets') {
+        // Create list first if needed
+        let listIdToUse = selectedListId;
+        
+        if (listMode === 'new' && newListName.trim()) {
+          const createListResponse = await fetch('/api/lists', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              name: newListName.trim(),
+              description: `Imported from Google Sheets: ${integrationCredentials.accountId}` 
+            }),
+          });
+
+          if (createListResponse.ok) {
+            const listData = await createListResponse.json();
+            listIdToUse = listData.list._id;
+            setSelectedListId(listIdToUse);
+            setLists(prev => [listData.list, ...prev]);
+          } else {
+            throw new Error('Failed to create list');
+          }
+        }
+
+        // Fetch data from Google Sheets (without importing yet)
         const payload = { 
-          accessToken: integrationCredentials.accessToken,
           spreadsheetId: integrationCredentials.accountId,
-          sheetName: integrationCredentials.workspaceId || 'Sheet1'
+          action: 'fetch' // Just fetch the data, don't import yet
         };
 
         const response = await fetch(endpoint, {
@@ -1854,8 +1615,28 @@ export default function LeadsImportPage() {
         if (response.ok) {
           const data = await response.json();
           setConnectionStatus('success');
-          alert(`Successfully imported ${data.importedCount} leads from ${importOptions.find(opt => opt.id === selectedOption)?.title}!`);
-          resetImport();
+          
+          // Convert Google Sheets data to CSV format
+          const sheetData = data.data || [];
+          if (sheetData.length === 0) {
+            throw new Error('No data found in the spreadsheet');
+          }
+
+          // Parse the data (first row as headers, rest as data)
+          const parsedData = sheetData.map((row: string[]) => {
+            const rowObj: Record<string, string> = {};
+            data.headers.forEach((header: string, index: number) => {
+              rowObj[header] = row[index] || '';
+            });
+            return rowObj;
+          });
+
+          // Set the data and move to mapping step
+          setCsvData(parsedData);
+          setCsvHeaders(data.headers); // ← THIS WAS MISSING!
+          setFileName(data.spreadsheetName || 'Google Sheets Import');
+          setUploadStatus('success');
+          setCurrentStep('mapping');
         } else {
           const errorData = await response.json();
           throw new Error(errorData.error || 'Connection failed');
@@ -1884,7 +1665,6 @@ export default function LeadsImportPage() {
   const StepIndicator = () => {
     const steps = [
       { key: 'select', label: 'Choose Method', icon: FileText },
-      { key: 'quickSend', label: 'Quick Send', icon: Zap },
       { key: 'upload', label: selectedOption === 'csv' ? 'Upload & Setup' : 'Connect & Setup', icon: Upload },
       { key: 'mapping', label: 'Map Fields', icon: MapPin },
       { key: 'preview', label: 'Preview', icon: Eye },
@@ -1939,13 +1719,6 @@ export default function LeadsImportPage() {
           </div>
           <div className="flex items-center space-x-3">
             <button 
-              onClick={() => setCurrentStep('quickSend')}
-              className="flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
-            >
-              <Zap className="w-4 h-4 mr-2" />
-              <span className="text-sm font-medium">Quick Send</span>
-            </button>
-            <button 
               onClick={async () => {
                 try {
                   const response = await fetch('/api/leads/export-template');
@@ -1982,13 +1755,6 @@ export default function LeadsImportPage() {
             <ImportMethodSelector onSelect={handleOptionSelect} />
           )}
 
-          {/* Quick Send Step */}
-          {currentStep === 'quickSend' && (
-            <QuickSend
-              onBack={() => setCurrentStep('select')}
-              onSend={handleQuickSend}
-            />
-          )}
 
           {/* Step 2: Upload CSV File & Setup */}
           {(() => {
@@ -2062,46 +1828,118 @@ export default function LeadsImportPage() {
                 )}
 
                 {selectedOption === 'google-sheets' && (
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Access Token
-                      </label>
-                      <input
-                        type="password"
-                        value={integrationCredentials.accessToken}
-                        onChange={(e) => setIntegrationCredentials(prev => ({ ...prev, accessToken: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                        placeholder="Enter your Google API access token"
-                      />
+                  <>
+                    <div className="max-w-4xl mx-auto">
+                      <div className="text-center mb-8">
+                        <h2 className="text-2xl font-semibold text-gray-900 mb-2">Connect Google Sheets & Setup</h2>
+                        <p className="text-gray-600">Connect your Google Sheet and configure where to save the leads</p>
+                      </div>
+
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        {/* Left Column: Google Sheets URL */}
+                        <div>
+                          <h3 className="text-lg font-semibold text-gray-900 mb-4">1. Connect Google Sheet</h3>
+                          
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                            <p className="text-sm text-blue-800 mb-2">
+                              <strong>Important: </strong>Go to File → Share → Share with Others → Under General Access, Change from Restricted to &quot;Anyone with link&quot;
+                            </p>
+                          </div>
+                          
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Google Sheet URL
+                            </label>
+                            <input
+                              type="text"
+                              value={integrationCredentials.accountId}
+                              onChange={(e) => setIntegrationCredentials(prev => ({ ...prev, accountId: e.target.value }))}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                              placeholder="https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              Paste the entire Google Sheets URL from your browser
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Right Column: List Selection */}
+                        <div>
+                          <h3 className="text-lg font-semibold text-gray-900 mb-4">2. Select List</h3>
+                          <div className="space-y-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-3">Where should these leads go?</label>
+                              <div className="space-y-4">
+                                <label className="flex items-center space-x-3">
+                                  <input 
+                                    type="radio" 
+                                    name="listMode" 
+                                    className="h-4 w-4" 
+                                    checked={listMode === 'existing'} 
+                                    onChange={() => setListMode('existing')} 
+                                  />
+                                  <span className="text-sm text-gray-800">Add to existing list</span>
+                                </label>
+                                
+                                {listMode === 'existing' && (
+                                  <select
+                                    value={selectedListId}
+                                    onChange={(e) => setSelectedListId(e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm bg-white"
+                                  >
+                                    <option value="">Select a list…</option>
+                                    {lists.map((l) => (
+                                      <option key={l._id} value={l._id}>{l.name}</option>
+                                    ))}
+                                  </select>
+                                )}
+
+                                <label className="flex items-center space-x-3 mt-4">
+                                  <input 
+                                    type="radio" 
+                                    name="listMode" 
+                                    className="h-4 w-4" 
+                                    checked={listMode === 'new'} 
+                                    onChange={() => setListMode('new')} 
+                                  />
+                                  <span className="text-sm text-gray-800">Create a new list</span>
+                                </label>
+                                
+                                {listMode === 'new' && (
+                                  <div className="space-y-3">
+                                    <input
+                                      type="text"
+                                      value={newListName}
+                                      onChange={(e) => setNewListName(e.target.value)}
+                                      placeholder="Enter new list name"
+                                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Continue Button */}
+                      <div className="flex justify-end mt-8">
+                        <button
+                          onClick={handleIntegrationConnect}
+                          disabled={
+                            isConnecting || 
+                            !integrationCredentials.accountId ||
+                            (listMode === 'existing' && !selectedListId) ||
+                            (listMode === 'new' && !newListName.trim())
+                          }
+                          className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium inline-flex items-center"
+                        >
+                          {isConnecting ? 'Connecting...' : 'Continue to Field Mapping'}
+                          <ArrowRight className="w-4 h-4 ml-2" />
+                        </button>
+                      </div>
                     </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Spreadsheet ID
-                      </label>
-                      <input
-                        type="text"
-                        value={integrationCredentials.accountId}
-                        onChange={(e) => setIntegrationCredentials(prev => ({ ...prev, accountId: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                        placeholder="Enter your Google Sheets spreadsheet ID"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Sheet Name (optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={integrationCredentials.workspaceId}
-                        onChange={(e) => setIntegrationCredentials(prev => ({ ...prev, workspaceId: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                        placeholder="Sheet1 (default)"
-                      />
-                    </div>
-                  </div>
+                  </>
                 )}
 
                 {connectionStatus === 'error' && (
@@ -2111,26 +1949,23 @@ export default function LeadsImportPage() {
                   </div>
                 )}
 
-                <div className="flex space-x-3 mt-8">
-                  <button 
-                    onClick={handleIntegrationConnect}
-                    disabled={isConnecting}
-                    className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors font-medium"
-                  >
-                    {isConnecting 
-                      ? 'Connecting...' 
-                      : (selectedOption === 'hubspot' || selectedOption === 'salesforce') 
-                        ? 'Authorize & Import' 
-                        : 'Connect & Import'
-                    }
-                  </button>
-                  <button 
-                    onClick={() => setCurrentStep('select')}
-                    className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                  >
-                    Cancel
-                  </button>
-                </div>
+                {(selectedOption === 'hubspot' || selectedOption === 'salesforce') && (
+                  <div className="flex justify-end space-x-3 mt-8">
+                    <button 
+                      onClick={handleIntegrationConnect}
+                      disabled={isConnecting}
+                      className="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                    >
+                      {isConnecting ? 'Connecting...' : 'Authorize & Import'}
+                    </button>
+                    <button 
+                      onClick={() => setCurrentStep('select')}
+                      className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2168,6 +2003,7 @@ export default function LeadsImportPage() {
               processedLeads={processedLeads}
               onViewLeads={() => window.location.href = '/leads'}
               onImportMore={resetImport}
+              listId={selectedListId}
             />
           )}
         </div>
