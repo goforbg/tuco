@@ -6,6 +6,40 @@ import { ILine, LineCollection } from '@/models/Line';
 import { ObjectId } from 'mongodb';
 
 /**
+ * Gets the availability check server URL from the database
+ * This uses a fixed server instead of the sender's server URL
+ */
+async function getAvailabilityServerUrl(): Promise<{ serverUrl: string; guid: string } | null> {
+  try {
+    const { db } = await connectDB();
+    
+    // Look for the availability check server line
+    // This should be a line with workspaceId: 'GLOBAL' and guid: 'AVAIL001'
+    const availabilityLine = await db
+      .collection<ILine>(LineCollection)
+      .findOne({ 
+        workspaceId: 'GLOBAL',
+        isActive: true,
+        provisioningStatus: 'active'
+      });
+    
+    if (availabilityLine) {
+      return {
+        serverUrl: availabilityLine.serverUrl,
+        guid: availabilityLine.guid
+      };
+    }
+    
+    // Fallback: if no availability server found, return null
+    console.warn('No availability server found in database');
+    return null;
+  } catch (error) {
+    console.error('Error getting availability server URL:', error);
+    return null;
+  }
+}
+
+/**
  * Checks iMessage availability for a single lead
  * Checks all non-empty phone and email fields, prioritizing those with blue bubble status
  */
@@ -138,20 +172,30 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
     }
 
-    // Get an active line to use for the API call
-    const activeLine = await db
-      .collection<ILine>(LineCollection)
-      .findOne({ 
-        workspaceId: orgId, 
-        isActive: true, 
-        provisioningStatus: 'active' 
-      });
-
-    if (!activeLine) {
+    // Get the availability server URL (instead of using sender's server)
+    const availabilityServer = await getAvailabilityServerUrl();
+    
+    if (!availabilityServer) {
       return NextResponse.json({ 
-        error: 'No active line found to check availability' 
+        error: 'Availability check server not configured' 
       }, { status: 400 });
     }
+
+    // OLD CODE - COMMENTED OUT FOR FUTURE REVERSION
+    // Get an active line to use for the API call
+    // const activeLine = await db
+    //   .collection<ILine>(LineCollection)
+    //   .findOne({ 
+    //     workspaceId: orgId, 
+    //     isActive: true, 
+    //     provisioningStatus: 'active' 
+    //   });
+
+    // if (!activeLine) {
+    //   return NextResponse.json({ 
+    //     error: 'No active line found to check availability' 
+    //   }, { status: 400 });
+    // }
 
     // Update lead status to checking
     await db.collection<ILead>(LeadCollection).updateOne(
@@ -164,8 +208,12 @@ export async function GET(request: NextRequest) {
       }
     );
 
+    // Check availability using the availability server
+    const result = await checkSingleAvailability(lead, availabilityServer.serverUrl, availabilityServer.guid);
+    
+    // OLD CODE - COMMENTED OUT FOR FUTURE REVERSION
     // Check availability
-    const result = await checkSingleAvailability(lead, activeLine.serverUrl, activeLine.guid);
+    // const result = await checkSingleAvailability(lead, activeLine.serverUrl, activeLine.guid);
 
     // Update lead with result
     const updateData: Record<string, unknown> = {
@@ -246,29 +294,48 @@ export async function POST(request: NextRequest) {
 
     const { db } = await connectDB();
 
-    // Get an active line to use for the API call
-    console.log('Looking for active line with orgId:', orgId);
-    const activeLine = await db
-      .collection<ILine>(LineCollection)
-      .findOne({ 
-        workspaceId: orgId, 
-        isActive: true, 
-        provisioningStatus: 'active' 
-      });
-
-    console.log('Active line found:', activeLine ? 'Yes' : 'No');
-    if (activeLine) {
-      console.log('Active line serverUrl:', activeLine.serverUrl);
+    // Get the availability server URL (instead of using sender's server)
+    console.log('Getting availability server URL');
+    const availabilityServer = await getAvailabilityServerUrl();
+    
+    console.log('Availability server found:', availabilityServer ? 'Yes' : 'No');
+    if (availabilityServer) {
+      console.log('Availability server URL:', availabilityServer.serverUrl);
     }
 
-    if (!activeLine) {
-      console.log('ERROR: No active line found');
+    if (!availabilityServer) {
+      console.log('ERROR: No availability server configured');
       return NextResponse.json({ 
-        error: 'NO_ACTIVE_LINE',
-        message: 'No active line found to check availability. Please create and activate a line in the Lines page first.',
-        details: 'You need an active line with a server URL to check iMessage availability.'
+        error: 'NO_AVAILABILITY_SERVER',
+        message: 'Availability check server not configured. Please contact support.',
+        details: 'The availability check server needs to be configured in the database.'
       }, { status: 400 });
     }
+
+    // OLD CODE - COMMENTED OUT FOR FUTURE REVERSION
+    // Get an active line to use for the API call
+    // console.log('Looking for active line with orgId:', orgId);
+    // const activeLine = await db
+    //   .collection<ILine>(LineCollection)
+    //   .findOne({ 
+    //     workspaceId: orgId, 
+    //     isActive: true, 
+    //     provisioningStatus: 'active' 
+    //   });
+
+    // console.log('Active line found:', activeLine ? 'Yes' : 'No');
+    // if (activeLine) {
+    //   console.log('Active line serverUrl:', activeLine.serverUrl);
+    // }
+
+    // if (!activeLine) {
+    //   console.log('ERROR: No active line found');
+    //   return NextResponse.json({ 
+    //     error: 'NO_ACTIVE_LINE',
+    //     message: 'No active line found to check availability. Please create and activate a line in the Lines page first.',
+    //     details: 'You need an active line with a server URL to check iMessage availability.'
+    //   }, { status: 400 });
+    // }
 
     // Handle individual address checking (for Quick Send)
     if (address) {
@@ -276,7 +343,7 @@ export async function POST(request: NextRequest) {
       try {
         const encodedAddress = encodeURIComponent(address);
         const response = await fetch(
-          `${activeLine.serverUrl}/api/v1/handle/availability/imessage?address=${encodedAddress}&guid=9UV08w2e`,
+          `${availabilityServer.serverUrl}/api/v1/handle/availability/imessage?address=${encodedAddress}&guid=${availabilityServer.guid}`,
           {
             method: 'GET',
             headers: {
@@ -284,6 +351,17 @@ export async function POST(request: NextRequest) {
             },
           }
         );
+
+        // OLD CODE - COMMENTED OUT FOR FUTURE REVERSION
+        // const response = await fetch(
+        //   `${activeLine.serverUrl}/api/v1/handle/availability/imessage?address=${encodedAddress}&guid=9UV08w2e`,
+        //   {
+        //     method: 'GET',
+        //     headers: {
+        //       'Accept': 'application/json',
+        //     },
+        //   }
+        // );
 
         if (!response.ok) {
           return NextResponse.json({ 
@@ -374,7 +452,10 @@ export async function POST(request: NextRequest) {
     let errorCount = 0;
 
     for (const lead of leads) {
-      const result = await checkSingleAvailability(lead, activeLine.serverUrl, activeLine.guid);
+      const result = await checkSingleAvailability(lead, availabilityServer.serverUrl, availabilityServer.guid);
+      
+      // OLD CODE - COMMENTED OUT FOR FUTURE REVERSION
+      // const result = await checkSingleAvailability(lead, activeLine.serverUrl, activeLine.guid);
       
       const updateData: Record<string, unknown> = {
         availabilityCheckedAt: new Date(),
