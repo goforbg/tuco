@@ -12,6 +12,8 @@ export default function TopBar({ onMenuToggle, isMobile }: TopBarProps) {
   const { organization } = useOrganization();
   const workspaceSlug = organization?.slug || 'workspace';
   const badgeInitial = workspaceSlug.charAt(0).toUpperCase();
+  
+
   return (
     <div className="bg-white border-b border-gray-200 px-4 md:px-6 h-16 flex items-center">
       <div className="w-full flex items-center">

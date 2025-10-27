@@ -28,6 +28,18 @@ export interface ILine {
   dailyTotalMessagesLimit: number; // default 150
 
 
+  // Health Check Tracking
+  healthCheck?: {
+    lastCheckedAt?: Date;
+    status?: 'healthy' | 'down';
+    lastServerHealthCheck?: Date;
+    lastAvailabilityCheck?: Date;
+    consecutiveFailures?: number;
+    lastEmailSentAt?: Date; // Track when last email was sent
+    lastHealthyAt?: Date; // Track when line was last marked healthy
+    sendEmailOnNextDown?: boolean; // Track if we should send email when down next time
+  };
+
   // Metadata
   createdAt: Date;
   updatedAt: Date;

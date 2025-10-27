@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Plus, Smartphone, CheckCircle2, Pencil, Loader2, X, Upload } from 'lucide-react';
+import { Plus, Smartphone, CheckCircle2, Pencil, Loader2, X, Upload, Activity, ChevronDown, ChevronUp } from 'lucide-react';
 import Link from 'next/link';
 import { useOrganization } from '@clerk/nextjs';
 import DashboardLayout from '@/components/DashboardLayout';
@@ -28,6 +28,13 @@ type LineData = {
     newConversationsCount: number;
     totalMessagesCount: number;
   };
+  healthCheck?: {
+    lastCheckedAt?: string;
+    status?: 'healthy' | 'down';
+    consecutiveFailures?: number;
+    lastEmailSentAt?: string;
+    lastHealthyAt?: string;
+  };
   createdAt: string;
   updatedAt: string;
 };
@@ -53,6 +60,7 @@ export default function LinesPage() {
   const [editUploading, setEditUploading] = useState(false);
   const [editUploadError, setEditUploadError] = useState('');
   const [editPreviewUrl, setEditPreviewUrl] = useState('');
+  const [expandedHealthId, setExpandedHealthId] = useState<string | null>(null);
 
   // Form state for purchase/edit
   // Purchase moved to separate page
@@ -124,6 +132,47 @@ export default function LinesPage() {
       }
     } finally {
       setRemovingId(null);
+    }
+  };
+
+  const getHealthStatusBadge = (healthCheck?: LineData['healthCheck']) => {
+    if (!healthCheck || !healthCheck.status) {
+      return null;
+    }
+
+    const status = healthCheck.status;
+    
+    if (status === 'healthy') {
+      return (
+        <div className="flex items-center space-x-1.5 text-green-600">
+          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          <span className="text-xs font-medium">Healthy</span>
+        </div>
+      );
+    } else if (status === 'down') {
+      return (
+        <div className="flex items-center space-x-1.5 text-red-600">
+          <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+          <span className="text-xs font-medium">Down</span>
+        </div>
+      );
+    }
+    
+    return null;
+  };
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'Never';
+    try {
+      const date = new Date(dateString);
+      const day = date.getDate().toString().padStart(2, '0');
+      const month = date.toLocaleDateString('en-US', { month: 'short' });
+      const year = date.getFullYear();
+      const hours = date.getHours().toString().padStart(2, '0');
+      const minutes = date.getMinutes().toString().padStart(2, '0');
+      return `${day}-${month}-${year} ${hours}:${minutes}`;
+    } catch {
+      return 'Invalid date';
     }
   };
 
@@ -210,6 +259,61 @@ export default function LinesPage() {
                           <span className="text-amber-600">• ETA: {etaText ?? '24–48 hours'}</span>
                         )}
                       </div>
+                      {/* Health Check Status */}
+                      {line.isActive && line.provisioningStatus === 'active' && line.healthCheck && (
+                        <div className="mt-2">
+                          <button
+                            onClick={() => setExpandedHealthId(expandedHealthId === line._id ? null : line._id)}
+                            className="flex items-center space-x-2 text-body-small text-gray-600 hover:text-gray-900 transition-colors"
+                          >
+                            <Activity className="w-3.5 h-3.5" />
+                            <span className="flex items-center space-x-2">
+                              {getHealthStatusBadge(line.healthCheck)}
+                              <span className="text-gray-400">• Last checked: {formatDate(line.healthCheck.lastCheckedAt)}</span>
+                            </span>
+                            {expandedHealthId === line._id ? (
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                          {/* Health Check Details */}
+                          {expandedHealthId === line._id && (
+                            <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                              <div className="text-xs space-y-1.5">
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">Status:</span>
+                                  <span className="font-medium">{line.healthCheck.status || 'Unknown'}</span>
+                                </div>
+                                {line.healthCheck.lastCheckedAt && (
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Last Checked:</span>
+                                    <span className="font-medium">{formatDate(line.healthCheck.lastCheckedAt)}</span>
+                                  </div>
+                                )}
+                                {line.healthCheck.consecutiveFailures !== undefined && line.healthCheck.consecutiveFailures > 0 && (
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Consecutive Failures:</span>
+                                    <span className="font-medium text-red-600">{line.healthCheck.consecutiveFailures}</span>
+                                  </div>
+                                )}
+                                {line.healthCheck.lastEmailSentAt && (
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Last Notification:</span>
+                                    <span className="font-medium">{formatDate(line.healthCheck.lastEmailSentAt)}</span>
+                                  </div>
+                                )}
+                                {line.healthCheck.lastHealthyAt && (
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Last Healthy:</span>
+                                    <span className="font-medium text-green-600">{formatDate(line.healthCheck.lastHealthyAt)}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">

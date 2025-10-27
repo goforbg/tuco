@@ -93,6 +93,8 @@ export async function GET() {
             newConversationsCount: usage.uniqueConversations.length,
             totalMessagesCount: usage.totalMessages,
           },
+          // Include health check data if it exists
+          healthCheck: line.healthCheck || null,
         };
       })
     );

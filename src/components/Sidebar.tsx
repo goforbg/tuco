@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { useUser } from '@clerk/nextjs';
+import { useState, useEffect } from 'react';
+import { useUser, useOrganization } from '@clerk/nextjs';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { 
@@ -12,7 +12,6 @@ import {
   BarChart3, 
   Key, 
   Settings, 
-  Megaphone, 
   ChevronLeft,
   ChevronRight,
   Smartphone,
@@ -20,16 +19,96 @@ import {
   MessageSquare
 } from 'lucide-react';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 
 interface SidebarProps {
   isCollapsed: boolean;
   onToggle: () => void;
 }
 
+interface Line {
+  _id: string;
+  phone: string;
+  isActive: boolean;
+  provisioningStatus: 'provisioning' | 'active' | 'failed';
+  healthCheck?: {
+    lastCheckedAt?: string;
+    status?: 'healthy' | 'down';
+    lastEmailSentAt?: string;
+    lastHealthyAt?: string;
+    consecutiveFailures?: number;
+  };
+}
+
+interface HealthStatus {
+  status: 'all-operational' | 'some-down' | 'all-down' | 'unknown';
+  healthyCount: number;
+  downCount: number;
+  totalCount: number;
+  hasUserLines: boolean;
+}
+
 export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
+  const router = useRouter();
   const { user } = useUser();
+  const { organization } = useOrganization();
   const [activeTab, setActiveTab] = useState('overview');
   const pathname = usePathname();
+  const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null);
+
+  // Fetch health status from database (cron job data)
+  useEffect(() => {
+    const fetchHealthStatus = async () => {
+      try {
+        const linesRes = await fetch('/api/lines');
+        if (linesRes.ok) {
+          const linesData = await linesRes.json();
+          const lines = linesData.lines || [];
+          
+          // Filter active user lines only
+          const activeUserLines = lines.filter((l: Line) => 
+            l.isActive && 
+            l.provisioningStatus === 'active' && 
+            l.phone !== 'AVAILABILITY-CHECK'
+          );
+          
+          const linesWithHealthData = activeUserLines.filter((l: Line) => l.healthCheck?.status);
+          
+          const healthyCount = linesWithHealthData.filter((l: Line) => l.healthCheck?.status === 'healthy').length;
+          const downCount = linesWithHealthData.filter((l: Line) => l.healthCheck?.status === 'down').length;
+          const totalCount = linesWithHealthData.length;
+          
+          let status: 'all-operational' | 'some-down' | 'all-down' | 'unknown';
+          if (totalCount === 0) {
+            status = 'unknown'; // No health data yet
+          } else if (healthyCount > 0 && downCount === 0) {
+            status = 'all-operational'; // All lines operational
+          } else if (healthyCount > 0 && downCount > 0) {
+            status = 'some-down'; // Some lines down
+          } else if (downCount > 0 && healthyCount === 0) {
+            status = 'all-down'; // All lines down
+          } else {
+            status = 'unknown';
+          }
+          
+          setHealthStatus({
+            status,
+            healthyCount,
+            downCount,
+            totalCount,
+            hasUserLines: activeUserLines.length > 0
+          });
+        }
+      } catch (error) {
+        console.error('Failed to fetch health status:', error);
+      }
+    };
+
+    fetchHealthStatus();
+    // Refresh every 5 minutes to match cron job interval
+    const interval = setInterval(fetchHealthStatus, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [organization?.id]);
 
   const navigationItems = [
     { id: 'overview', label: 'Overview', icon: Home, href: '/' },
@@ -111,21 +190,46 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         </ul>
       </nav>
 
-      {/* What's New Button */}
-      <div className="p-4">
-        <button className={`w-full flex items-center ${isCollapsed ? 'justify-center px-2' : 'px-3'} py-2 border border-primary text-primary rounded-lg text-body-small font-body-small bg-primary-light transition-colors cursor-pointer`}>
-          <Megaphone className={`icon-24 ${isCollapsed ? '' : 'mr-3'}`} />
-          {!isCollapsed && (
-            <>
-            <div className='flex flex-col items-start'> 
-              <span className='font-bold'>What&apos;s New</span>
-              <div className="ml-auto text-body-small text-gray-500">
-                View our latest update.
+      {/* Availability Status */}
+      <div className="p-4 cursor-pointer" onClick={() => router.push("/lines")}>
+        {!isCollapsed ? (
+          <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg p-3.5 border border-gray-200">
+            <div className="flex items-center mb-2.5">
+              <Activity className="w-4 h-4 text-gray-600 mr-2" />
+              <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Status</span>
+            </div>
+            {healthStatus?.status === 'all-operational' && (
+              <div className="flex items-center">
+                <div className="w-2 h-2 rounded-full bg-green-500 mr-2 animate-pulse" />
+                <span className="text-sm font-medium text-gray-900">All lines operational</span>
               </div>
+            )}
+            {healthStatus?.status === 'some-down' && (
+              <div className="flex items-center">
+                <div className="w-2 h-2 rounded-full bg-yellow-500 mr-2 animate-pulse" />
+                <span className="text-sm font-medium text-yellow-700">
+                  Some lines down ({healthStatus.downCount}/{healthStatus.totalCount})
+                </span>
               </div>
-            </>
-          )}
-        </button>
+            )}
+            {healthStatus?.status === 'all-down' && (
+              <div className="flex items-center">
+                <div className="w-2 h-2 rounded-full bg-red-500 mr-2 animate-pulse" />
+                <span className="text-sm font-medium text-red-700">All lines down</span>
+              </div>
+            )}
+            {(!healthStatus || healthStatus.status === 'unknown') && (
+              <div className="flex items-center">
+                <div className="w-2 h-2 rounded-full bg-gray-400 mr-2" />
+                <span className="text-sm font-medium text-gray-600">Checking status...</span>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex justify-center">
+            <Activity className="w-5 h-5 text-gray-400" />
+          </div>
+        )}
       </div>
 
       {/* Account Info */}
