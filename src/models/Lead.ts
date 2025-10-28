@@ -5,9 +5,9 @@ export interface ILead {
   
   // Basic Information (Required)
   firstName: string;
-  lastName: string;
-  email: string;
-  phone: string; // Made mandatory as per requirements
+  lastName?: string; // Optional - might not be provided in map fields
+  email?: string; // Optional - either email or phone is required
+  phone?: string; // Optional - either email or phone is required
   
   // Alternate Contact Information
   altPhone1?: string;

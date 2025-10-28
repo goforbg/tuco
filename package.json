@@ -7,8 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "health-check": "node scripts/run-health-check.js",
-    "health-check-debug": "node scripts/run-health-check.js"
+    "bullmq:init": "curl -X POST http://localhost:3000/api/bullmq/initialize",
+    "bullmq:health": "curl http://localhost:3000/api/bullmq/health",
+    "bullmq:stats": "curl http://localhost:3000/api/bullmq/stats"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.699.0",
@@ -16,7 +17,9 @@
     "@clerk/nextjs": "^6.33.2",
     "@types/nodemailer": "^7.0.3",
     "@types/papaparse": "^5.3.16",
+    "bullmq": "^5.0.0",
     "googleapis": "^162.0.0",
+    "ioredis": "^5.4.1",
     "lucide-react": "^0.544.0",
     "mongodb": "^6.20.0",
     "next": "15.5.4",

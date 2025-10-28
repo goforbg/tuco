@@ -38,9 +38,9 @@ export async function POST(request: NextRequest) {
 
     // Process and validate leads
     const processedLeads = leads.map((lead: Record<string, unknown>) => {
-      // Validate required fields
-      if (!lead.firstName || !lead.lastName || !lead.email || !lead.phone) {
-        throw new Error('Missing required fields: firstName, lastName, email, phone');
+      // Validate required fields - firstName is required, either email OR phone is required
+      if (!lead.firstName || (!lead.email && !lead.phone)) {
+        throw new Error('Missing required fields: firstName and either email or phone');
       }
 
       // Extract custom fields (any field not in standard fields) and merge if provided
@@ -62,9 +62,9 @@ export async function POST(request: NextRequest) {
 
       return {
         firstName: String(lead.firstName),
-        lastName: String(lead.lastName),
-        email: String(lead.email),
-        phone: String(lead.phone),
+        lastName: lead.lastName ? String(lead.lastName) : undefined,
+        email: lead.email ? String(lead.email) : undefined,
+        phone: lead.phone ? String(lead.phone) : undefined,
         companyName: lead.companyName ? String(lead.companyName) : undefined,
         jobTitle: lead.jobTitle ? String(lead.jobTitle) : undefined,
         linkedinUrl: lead.linkedinUrl ? String(lead.linkedinUrl) : undefined,
@@ -81,32 +81,79 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    // Check for duplicates based on email + phone combination in the workspace
-    const emailPhonePairs = processedLeads.map(lead => ({
-      email: lead.email.toLowerCase(),
-      phone: lead.phone
-    }));
+    // Check for duplicates within the same list
+    // We'll check for duplicates based on:
+    // 1. Email + Phone combination (if both exist)
+    // 2. Email only (if only email exists)
+    // 3. Phone only (if only phone exists)
+    
+    const duplicateCheckQueries: Array<{
+      email?: string | { $exists: boolean };
+      phone?: string | { $exists: boolean };
+    }> = [];
+    
+    // Build queries for different duplicate scenarios
+    processedLeads.forEach(lead => {
+      if (lead.email && lead.phone) {
+        // Both email and phone exist - check for exact match
+        duplicateCheckQueries.push({
+          email: lead.email.toLowerCase(),
+          phone: lead.phone
+        });
+      } else if (lead.email && !lead.phone) {
+        // Only email exists - check for email match
+        duplicateCheckQueries.push({
+          email: lead.email.toLowerCase(),
+          phone: { $exists: false }
+        });
+      } else if (!lead.email && lead.phone) {
+        // Only phone exists - check for phone match
+        duplicateCheckQueries.push({
+          phone: lead.phone,
+          email: { $exists: false }
+        });
+      }
+    });
 
-    const existingLeads = await db.collection<ILead>(LeadCollection)
+    const existingLeads = duplicateCheckQueries.length > 0 ? await db.collection<ILead>(LeadCollection)
       .find({
         workspaceId: orgId,
-        $or: emailPhonePairs.map(pair => ({
-          email: pair.email,
-          phone: pair.phone
-        }))
+        listId: new ObjectId(listId), // Check only within the same list
+        $or: duplicateCheckQueries
       })
       .project({ email: 1, phone: 1 })
-      .toArray();
+      .toArray() : [];
 
-    // Create a Set of existing email+phone combinations for fast lookup
-    const existingCombos = new Set(
-      existingLeads.map(lead => `${lead.email.toLowerCase()}:${lead.phone}`)
-    );
+    // Create sets for different types of duplicates
+    const existingEmailPhoneCombos = new Set<string>();
+    const existingEmailsOnly = new Set<string>();
+    const existingPhonesOnly = new Set<string>();
+
+    existingLeads.forEach(lead => {
+      if (lead.email && lead.phone) {
+        existingEmailPhoneCombos.add(`${lead.email.toLowerCase()}:${lead.phone}`);
+      } else if (lead.email && !lead.phone) {
+        existingEmailsOnly.add(lead.email.toLowerCase());
+      } else if (!lead.email && lead.phone) {
+        existingPhonesOnly.add(lead.phone);
+      }
+    });
 
     // Filter out duplicates
-    const newLeads = processedLeads.filter(lead => 
-      !existingCombos.has(`${lead.email.toLowerCase()}:${lead.phone}`)
-    );
+    const newLeads = processedLeads.filter(lead => {
+      if (lead.email && lead.phone) {
+        // Both email and phone exist - check for exact match
+        return !existingEmailPhoneCombos.has(`${lead.email.toLowerCase()}:${lead.phone}`);
+      } else if (lead.email && !lead.phone) {
+        // Only email exists - check for email match
+        return !existingEmailsOnly.has(lead.email.toLowerCase());
+      } else if (!lead.email && lead.phone) {
+        // Only phone exists - check for phone match
+        return !existingPhonesOnly.has(lead.phone);
+      }
+      // If neither email nor phone exists, this shouldn't happen due to validation above
+      return true;
+    });
 
     const duplicateCount = processedLeads.length - newLeads.length;
 
@@ -133,6 +180,8 @@ export async function POST(request: NextRequest) {
 
     // Trigger bulk availability checking for new leads (async, don't wait)
     if (leadIds.length > 0) {
+      console.log(`🔄 TRIGGERING AVAILABILITY CHECK for ${leadIds.length} leads`);
+      console.log(`📋 Lead IDs: ${leadIds.slice(0, 5).join(', ')}${leadIds.length > 5 ? '...' : ''}`);
       
       // Start bulk availability checking in background with proper auth
       fetch(`${process.env.NEXT_PUBLIC_APP_URL|| 'https://app.tuco.ai'}/api/leads/check-availability`, {
@@ -145,13 +194,15 @@ export async function POST(request: NextRequest) {
         },
         body: JSON.stringify({ leadIds }),
       }).then(async (response) => {
+        console.log(`📡 Availability check API response: ${response.status} ${response.statusText}`);
+        
         if (!response.ok) {
           const errorData = await response.json();
-          console.error('Error triggering bulk availability check:', errorData);
+          console.error('❌ Error triggering bulk availability check:', errorData);
           
-          // If it's a NO_ACTIVE_LINE error, update all leads to no_active_line status
-          if (errorData.error === 'NO_ACTIVE_LINE') {
-            console.log('Availability checking skipped: No active line configured');
+          // If it's a NO_AVAILABILITY_SERVER error, update all leads to no_active_line status
+          if (errorData.error === 'NO_AVAILABILITY_SERVER') {
+            console.log('⚠️ Availability checking skipped: No availability server configured');
             
             // Update all leads to no_active_line status
             await db.collection<ILead>(LeadCollection).updateMany(
@@ -163,17 +214,23 @@ export async function POST(request: NextRequest) {
                 },
               }
             );
+            console.log(`✅ Updated ${leadIds.length} leads to 'no_active_line' status`);
           }
+        } else {
+          const result = await response.json();
+          console.log('✅ Availability check triggered successfully:', result);
         }
       }).catch(error => {
-        console.error('Error triggering bulk availability check:', error);
+        console.error('❌ Network error triggering bulk availability check:', error);
       });
+    } else {
+      console.log('ℹ️ No leads to check availability for');
     }
 
     return NextResponse.json({ 
       message: 'Leads saved successfully', 
       savedCount: insertedCount,
-      duplicateCount,
+      duplicateCount, // Duplicates found within the same list
       totalProcessed: processedLeads.length,
       listId: listId || null
     });

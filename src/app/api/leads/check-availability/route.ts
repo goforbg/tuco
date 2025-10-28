@@ -4,6 +4,7 @@ import connectDB from '@/lib/mongodb';
 import { ILead, LeadCollection } from '@/models/Lead';
 import { ILine, LineCollection } from '@/models/Line';
 import { ObjectId } from 'mongodb';
+import { addBulkAvailabilityJob } from '@/lib/bullmq';
 
 /**
  * Gets the availability check server URL from the database
@@ -11,6 +12,7 @@ import { ObjectId } from 'mongodb';
  */
 async function getAvailabilityServerUrl(): Promise<{ serverUrl: string; guid: string } | null> {
   try {
+    console.log('🔍 Searching for availability server in database...');
     const { db } = await connectDB();
     
     // Look for the availability check server line
@@ -24,6 +26,12 @@ async function getAvailabilityServerUrl(): Promise<{ serverUrl: string; guid: st
       });
     
     if (availabilityLine) {
+      console.log('✅ Availability server found:', {
+        id: availabilityLine._id,
+        serverUrl: availabilityLine.serverUrl,
+        guid: availabilityLine.guid,
+        workspaceId: availabilityLine.workspaceId
+      });
       return {
         serverUrl: availabilityLine.serverUrl,
         guid: availabilityLine.guid
@@ -31,10 +39,11 @@ async function getAvailabilityServerUrl(): Promise<{ serverUrl: string; guid: st
     }
     
     // Fallback: if no availability server found, return null
-    console.warn('No availability server found in database');
+    console.log('❌ No availability server found in database');
+    console.log('💡 To fix this, run: cd scripts && node add-availability-server.js');
     return null;
   } catch (error) {
-    console.error('Error getting availability server URL:', error);
+    console.error('❌ Error getting availability server URL:', error);
     return null;
   }
 }
@@ -52,7 +61,7 @@ async function checkSingleAvailability(
     // Collect all non-empty phone and email addresses
     const addresses: string[] = [];
     
-    // Primary phone and email
+    // Primary phone and email (phone is optional)
     if (lead.phone) addresses.push(lead.phone);
     if (lead.email) addresses.push(lead.email);
     
@@ -67,7 +76,7 @@ async function checkSingleAvailability(
     if (lead.altEmail3) addresses.push(lead.altEmail3);
     
     if (addresses.length === 0) {
-      return { success: false, error: 'No phone or email found' };
+      return { success: false, error: 'No phone or email found - at least one is required for availability checking' };
     }
 
     // Check each address until we find one that supports iMessage
@@ -142,6 +151,7 @@ async function checkSingleAvailability(
     };
   }
 }
+
 
 // GET /api/leads/check-availability?id=<leadId> - check availability for single lead
 export async function GET(request: NextRequest) {
@@ -254,57 +264,58 @@ export async function POST(request: NextRequest) {
     const userIdHeader = request.headers.get('x-user-id');
     const orgIdHeader = request.headers.get('x-org-id');
     
-    console.log('Auth header:', authHeader ? 'Present' : 'Missing');
-    console.log('User ID header:', userIdHeader);
-    console.log('Org ID header:', orgIdHeader);
+    console.log('🔐 Auth header:', authHeader ? 'Present' : 'Missing');
+    console.log('👤 User ID header:', userIdHeader);
+    console.log('🏢 Org ID header:', orgIdHeader);
     
     let userId, orgId;
     
     if (authHeader && userIdHeader && orgIdHeader) {
-      console.log('Using server-side auth headers');
+      console.log('✅ Using server-side auth headers');
       // Server-side call with custom headers
       userId = userIdHeader;
       orgId = orgIdHeader;
     } else {
-      console.log('Using regular Clerk auth');
+      console.log('✅ Using regular Clerk auth');
       // Regular client-side call
       const authResult = await auth();
       userId = authResult.userId;
       orgId = authResult.orgId;
     }
     
-    console.log('Final userId:', userId);
-    console.log('Final orgId:', orgId);
+    console.log('🎯 Final userId:', userId);
+    console.log('🎯 Final orgId:', orgId);
     
     if (!userId) {
-      console.log('ERROR: No userId found');
+      console.log('❌ ERROR: No userId found');
       return NextResponse.json({ error: 'Unauthorized - No userId' }, { status: 401 });
     }
     if (!orgId) {
-      console.log('ERROR: No orgId found');
+      console.log('❌ ERROR: No orgId found');
       return NextResponse.json({ error: 'No active workspace - No orgId' }, { status: 400 });
     }
 
     const body = await request.json();
-    console.log('Request body:', body);
+    console.log('📦 Request body:', body);
     const { leadIds, listId, address } = body;
-    console.log('leadIds:', leadIds);
-    console.log('listId:', listId);
-    console.log('address:', address);
+    console.log('📋 leadIds:', leadIds);
+    console.log('📂 listId:', listId);
+    console.log('📧 address:', address);
 
     const { db } = await connectDB();
 
     // Get the availability server URL (instead of using sender's server)
-    console.log('Getting availability server URL');
+    console.log('🔍 Getting availability server URL...');
     const availabilityServer = await getAvailabilityServerUrl();
     
-    console.log('Availability server found:', availabilityServer ? 'Yes' : 'No');
+    console.log('🖥️ Availability server found:', availabilityServer ? 'Yes' : 'No');
     if (availabilityServer) {
-      console.log('Availability server URL:', availabilityServer.serverUrl);
+      console.log('🌐 Availability server URL:', availabilityServer.serverUrl);
+      console.log('🔑 Availability server GUID:', availabilityServer.guid);
     }
 
     if (!availabilityServer) {
-      console.log('ERROR: No availability server configured');
+      console.log('❌ ERROR: No availability server configured');
       return NextResponse.json({ 
         error: 'NO_AVAILABILITY_SERVER',
         message: 'Availability check server not configured. Please contact support.',
@@ -446,16 +457,39 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    // Check availability for each lead
+    // For bulk processing, add job to BullMQ queue instead of processing synchronously
+    if (leads.length > 1) {
+      console.log(`🚀 Processing ${leads.length} leads via BullMQ background job`);
+      
+      const leadIds = leads.map(lead => lead._id!.toString());
+      console.log(`📋 Adding BullMQ job with ${leadIds.length} lead IDs`);
+      
+      const jobId = await addBulkAvailabilityJob({
+        leadIds,
+        userId,
+        workspaceId: orgId,
+      });
+
+      console.log(`✅ BullMQ job created with ID: ${jobId}`);
+
+      return NextResponse.json({
+        success: true,
+        message: 'Bulk availability check started in background',
+        jobId,
+        checked: leads.length,
+        processingMode: 'background',
+      });
+    }
+
+    // For small batches (≤1 leads), process synchronously for immediate results
+    console.log(`⚡ Processing ${leads.length} leads synchronously`);
     const results = [];
     let successCount = 0;
     let errorCount = 0;
 
     for (const lead of leads) {
+      console.log(`🔍 Checking availability for lead: ${lead._id}`);
       const result = await checkSingleAvailability(lead, availabilityServer.serverUrl, availabilityServer.guid);
-      
-      // OLD CODE - COMMENTED OUT FOR FUTURE REVERSION
-      // const result = await checkSingleAvailability(lead, activeLine.serverUrl, activeLine.guid);
       
       const updateData: Record<string, unknown> = {
         availabilityCheckedAt: new Date(),
@@ -465,9 +499,11 @@ export async function POST(request: NextRequest) {
       if (result.success) {
         updateData.availabilityStatus = result.available ? 'available' : 'unavailable';
         successCount++;
+        console.log(`✅ Lead ${lead._id}: ${result.available ? 'available' : 'unavailable'}`);
       } else {
         updateData.availabilityStatus = 'error';
         errorCount++;
+        console.log(`❌ Lead ${lead._id}: error - ${result.error}`);
       }
 
       await db.collection<ILead>(LeadCollection).updateOne(
@@ -483,12 +519,15 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    console.log(`📊 Synchronous processing completed: ${leads.length} checked, ${successCount} successful, ${errorCount} errors`);
+
     return NextResponse.json({
       success: true,
       checked: leads.length,
       successful: successCount,
       errors: errorCount,
       results,
+      processingMode: 'synchronous',
     });
   } catch (error) {
     console.error('Error checking bulk availability:', error);

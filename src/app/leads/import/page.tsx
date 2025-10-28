@@ -103,9 +103,9 @@ const importOptions: ImportOption[] = [
 
 const requiredFields = [
   { key: 'firstName', label: 'First Name', required: true },
-  { key: 'lastName', label: 'Last Name', required: true },
-  { key: 'email', label: 'Email', required: true },
-  { key: 'phone', label: 'Phone', required: true },
+  { key: 'lastName', label: 'Last Name', required: false },
+  { key: 'email', label: 'Email', required: false, note: 'Either email or phone is required' },
+  { key: 'phone', label: 'Phone', required: false, note: 'Either email or phone is required' },
   { key: 'altPhone1', label: 'Alt Phone 1', required: false },
   { key: 'altPhone2', label: 'Alt Phone 2', required: false },
   { key: 'altPhone3', label: 'Alt Phone 3', required: false },
@@ -601,6 +601,7 @@ const FieldMapper = ({
                   <label className="block text-sm font-medium text-gray-900">
                     {field.label}
                     {field.required && <span className="text-red-500 ml-1">*</span>}
+                    {field.note && <span className="text-gray-500 ml-2 text-xs">({field.note})</span>}
                   </label>
                 </div>
                 <div className="flex-1">
@@ -681,7 +682,7 @@ const FieldMapper = ({
         </button>
         <button 
           onClick={onContinue}
-          disabled={!fieldMapping.firstName || !fieldMapping.lastName || !fieldMapping.email || !fieldMapping.phone || isProcessing}
+          disabled={!fieldMapping.firstName || (!fieldMapping.email && !fieldMapping.phone) || isProcessing}
           className="flex items-center px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors font-medium"
         >
           {isProcessing ? 'Processing...' : 'Continue'}
@@ -1396,34 +1397,36 @@ export default function LeadsImportPage() {
         const email = formatEmail(row[fieldMapping.email] || '');
         const phone = formatPhoneNumber(row[fieldMapping.phone] || '');
 
-        // Validate required fields
-        if (!firstName || !lastName || !email || !phone) {
-          errors.push(`Row ${rowNumber}: Missing required fields (firstName, lastName, email, or phone)`);
+        // Validate required fields - firstName is required, lastName is optional, either email OR phone is required
+        if (!firstName || (!email && !phone)) {
+          errors.push(`Row ${rowNumber}: Missing required fields (firstName and either email or phone)`);
           malformedRows++;
           return;
         }
 
-        // Validate email format
-        if (!isValidEmail(email)) {
+        // Validate email format (only if email is provided)
+        if (email && !isValidEmail(email)) {
           errors.push(`Row ${rowNumber}: Invalid email format - ${email}`);
           malformedRows++;
           return;
         }
 
-        // Validate phone format
-        if (!isValidPhone(phone)) {
+        // Validate phone format (only if phone is provided)
+        if (phone && !isValidPhone(phone)) {
           errors.push(`Row ${rowNumber}: Invalid phone format - ${phone}`);
           malformedRows++;
           return;
         }
 
-        // Check for duplicates based on email
-        const duplicateKey = email.toLowerCase();
-        if (duplicates.has(duplicateKey)) {
-          errors.push(`Row ${rowNumber}: Duplicate email found - ${email}`);
-          return;
+        // Check for duplicates based on email (only if email exists)
+        if (email) {
+          const duplicateKey = email.toLowerCase();
+          if (duplicates.has(duplicateKey)) {
+            errors.push(`Row ${rowNumber}: Duplicate email found - ${email}`);
+            return;
+          }
+          duplicates.add(duplicateKey);
         }
-        duplicates.add(duplicateKey);
 
         // Process alternate phone numbers
         const altPhone1 = fieldMapping.altPhone1 ? formatPhoneNumber(row[fieldMapping.altPhone1] || '') : undefined;

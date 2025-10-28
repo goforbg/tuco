@@ -3,11 +3,12 @@ import { auth } from '@clerk/nextjs/server';
 import connectDB from '@/lib/mongodb';
 import { IIntegrationConfig, IntegrationConfigCollection } from '@/models/IntegrationConfig';
 import { ObjectId } from 'mongodb';
+import { addIntegrationSyncJob } from '@/lib/bullmq';
 
 // Background sync service for continuous integration syncing
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth();
+    const { userId, orgId } = await auth();
     
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -24,25 +25,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `${integrationType} integration not configured` }, { status: 404 });
     }
 
-    // Trigger sync based on integration type
-    let syncResult;
-    switch (integrationType) {
-      case 'hubspot':
-        syncResult = await triggerHubSpotSync(userId, config, listId, forceFullSync);
-        break;
-      case 'salesforce':
-        syncResult = await triggerSalesforceSync(userId, config, listId, forceFullSync);
-        break;
-      case 'google_sheets':
-        syncResult = await triggerGoogleSheetsSync(userId, config, listId, forceFullSync);
-        break;
-      default:
-        return NextResponse.json({ error: 'Unsupported integration type' }, { status: 400 });
-    }
+    // Add sync job to BullMQ queue instead of processing synchronously
+    const workspaceId = orgId || userId;
+    const jobId = await addIntegrationSyncJob({
+      integrationType,
+      userId,
+      workspaceId,
+      configId: config._id!.toString(),
+      listId,
+      forceFullSync,
+    });
 
     return NextResponse.json({
       message: `${integrationType} sync started`,
-      jobId: syncResult.jobId,
+      jobId,
+      processingMode: 'background',
     });
 
   } catch (error) {
@@ -123,44 +120,3 @@ export async function GET(request: NextRequest) {
   }
 }
 
-async function triggerHubSpotSync(
-  _userId: string, 
-  config: IIntegrationConfig, 
-  _listId?: string, 
-  _forceFullSync = false
-): Promise<{ jobId: ObjectId }> {
-  // Suppress unused parameter warnings
-  void _listId;
-  void _forceFullSync;
-  // For now, return a dummy job ID since we can't import the function
-  // In a real implementation, you'd call the HubSpot import directly
-  return { jobId: config._id! };
-}
-
-async function triggerSalesforceSync(
-  _userId: string, 
-  config: IIntegrationConfig, 
-  _listId?: string, 
-  _forceFullSync = false
-): Promise<{ jobId: ObjectId }> {
-  // Suppress unused parameter warnings
-  void _listId;
-  void _forceFullSync;
-  // For now, return a dummy job ID since we can't import the function
-  // In a real implementation, you'd call the Salesforce import directly
-  return { jobId: config._id! };
-}
-
-async function triggerGoogleSheetsSync(
-  _userId: string, 
-  config: IIntegrationConfig, 
-  _listId?: string, 
-  _forceFullSync = false
-): Promise<{ jobId: ObjectId }> {
-  // Suppress unused parameter warnings
-  void _listId;
-  void _forceFullSync;
-  // For now, return a dummy job ID since we can't import the function
-  // In a real implementation, you'd call the Google Sheets import directly
-  return { jobId: config._id! };
-}

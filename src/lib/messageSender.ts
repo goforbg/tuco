@@ -4,6 +4,7 @@ import { IActivity, ActivityCollection } from '@/models/Activity';
 import { ILead, LeadCollection } from '@/models/Lead';
 import connectDB from './mongodb';
 import { ObjectId } from 'mongodb';
+import { addMessageProcessingJob } from './bullmq';
 
 export interface SendMessageRequest {
   message: string;
@@ -22,6 +23,7 @@ export interface SendMessageResponse {
   messageId?: string;
   externalMessageId?: string;
   error?: string;
+  processingMode?: 'background' | 'synchronous';
 }
 
 /**
@@ -254,7 +256,7 @@ export async function createMessage(
   request: SendMessageRequest,
   workspaceId: string,
   createdByUserId: string
-): Promise<{ success: boolean; messageId?: string; error?: string }> {
+): Promise<SendMessageResponse> {
   try {
     const { db } = await connectDB();
 
@@ -324,14 +326,29 @@ export async function createMessage(
 
     const result = await db.collection<IMessage>(MessageCollection).insertOne(newMessage);
 
-    // If message should be sent now, attempt to send it
+    // If message should be sent now, add to BullMQ queue for background processing
     if (shouldSendNow) {
-      const sendResult = await processPendingMessage(result.insertedId);
-      return {
-        success: sendResult.success,
-        messageId: result.insertedId.toString(),
-        error: sendResult.error,
-      };
+      try {
+        await addMessageProcessingJob({
+          messageId: result.insertedId.toString(),
+        });
+        
+        return {
+          success: true,
+          messageId: result.insertedId.toString(),
+          processingMode: 'background' as const,
+        };
+      } catch (error) {
+        console.error('Error adding message to BullMQ queue:', error);
+        // Fallback to synchronous processing if BullMQ fails
+        const sendResult = await processPendingMessage(result.insertedId);
+        return {
+          success: sendResult.success,
+          messageId: result.insertedId.toString(),
+          error: sendResult.error,
+          processingMode: 'synchronous',
+        };
+      }
     }
 
     return {
@@ -507,14 +524,15 @@ export async function processScheduledMessages(): Promise<{ processed: number; e
         }
       );
 
-      // Process the message
-      const result = await processPendingMessage(message._id!);
-      
-      if (result.success) {
+      // Add to BullMQ queue for background processing
+      try {
+        await addMessageProcessingJob({
+          messageId: message._id!.toString(),
+        });
         processed++;
-      } else {
+      } catch (error) {
+        console.error(`Failed to add scheduled message ${message._id} to BullMQ queue:`, error);
         errors++;
-        console.error(`Failed to process scheduled message ${message._id}:`, result.error);
       }
     }
 
